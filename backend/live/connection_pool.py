@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
 
@@ -15,10 +16,23 @@ def create_session(session_id: str | None = None) -> dict[str, Any]:
         "live_session": None,
         "langgraph_thread_id": str(uuid.uuid4()),
         "agent_state": _empty_agent_state(),
+        "websocket": None,
+        "audio_frozen": False,
+        "handoff_running": False,
+        "graph_lock": asyncio.Lock(),
     }
     sessions[sid] = session
     session["session_id"] = sid
     return session
+
+
+def get_or_create_session(session_id: str) -> dict[str, Any]:
+    if session_id in sessions:
+        session = sessions[session_id]
+        session.setdefault("graph_lock", asyncio.Lock())
+        session.setdefault("handoff_running", False)
+        return session
+    return create_session(session_id)
 
 
 def get_session(session_id: str) -> dict[str, Any]:

@@ -3,20 +3,36 @@ from __future__ import annotations
 from typing import Any
 
 from graph.state import AgentState
+from graph.product_pick import pick_product_from_text
 from kapruka_mcp.kapruka_tools import extract_price_amount, is_perishable_product
+
+
+def _latest_user_text(state: AgentState) -> str:
+    from langchain_core.messages import HumanMessage
+
+    for message in reversed(state["messages"]):
+        if isinstance(message, HumanMessage):
+            return str(message.content)
+    return ""
 
 
 def cart_manager_node(state: AgentState) -> dict[str, Any]:
     payload = (state.get("ui_action") or {}).get("payload") or {}
-    selected = payload.get("selected_product")
-    if not selected:
-        products = payload.get("products") or []
-        selected = products[0] if products else None
+    products = payload.get("products") or []
+    user_text = _latest_user_text(state)
 
+    selected = payload.get("selected_product")
+    if products:
+        picked = pick_product_from_text(user_text, products)
+        if picked:
+            selected = picked
     if not selected:
         return {
-            "voice_prompt": "I don't have a product selected yet. What would you like to add?",
-            "next_node": "discovery",
+            "voice_prompt": (
+                "Which gift would you like? Tap one on screen or tell me the name — "
+                "for example, the Lavender Love cake."
+            ),
+            "next_node": "end",
         }
 
     product_id = selected.get("id") or selected.get("product_id")
@@ -28,6 +44,7 @@ def cart_manager_node(state: AgentState) -> dict[str, Any]:
         }
 
     cart = list(state.get("cart") or [])
+    delivery_info = dict(state.get("delivery_info") or {})
     existing = next((item for item in cart if item["product_id"] == product_id), None)
     if existing:
         existing["quantity"] = existing.get("quantity", 1) + 1
@@ -42,8 +59,12 @@ def cart_manager_node(state: AgentState) -> dict[str, Any]:
             }
         )
 
+    if delivery_info.get("validated") == "true":
+        delivery_info.pop("validated", None)
+
     return {
         "cart": cart,
+        "delivery_info": delivery_info,
         "ui_action": {
             "action": "update_cart",
             "payload": {
@@ -51,6 +72,15 @@ def cart_manager_node(state: AgentState) -> dict[str, Any]:
                 "cart": cart,
             },
         },
-        "voice_prompt": f"Added {selected.get('name')} to your cart.",
-        "next_node": "validation",
+        "voice_prompt": _after_add_prompt(selected.get("name", "item"), delivery_info),
+        "next_node": "validation" if delivery_info.get("city") and delivery_info.get("date") else "end",
     }
+
+
+def _after_add_prompt(name: str, delivery_info: dict[str, Any]) -> str:
+    if delivery_info.get("city") and delivery_info.get("date"):
+        return f"Added {name} to your cart. I'll check delivery to {delivery_info['city']} next."
+    return (
+        f"Added {name} to your cart — tap the cart icon to review. "
+        "Would you like to browse more gifts, or shall we proceed to checkout?"
+    )

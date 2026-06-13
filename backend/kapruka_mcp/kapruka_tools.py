@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import re
 import threading
+import time
+from collections import deque
 from contextlib import AsyncExitStack
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from mcp import ClientSession
@@ -13,11 +18,136 @@ from mcp.client.streamable_http import streamablehttp_client
 
 from config import settings
 
+logger = logging.getLogger(__name__)
+
 PERISHABLE_PREFIXES = ("CAKE", "FLOWER", "COMBO")
+
+# Kapruka free tier: 60 req/min/IP across all tools; 30 create_order/hour/IP.
+MCP_REQUESTS_PER_MINUTE = 60
+MCP_ORDER_LIMIT_PER_HOUR = 30
+MCP_READ_CACHE_TTL_SECONDS = 30 * 60  # matches server-side product/category cache
+MCP_RATE_LIMIT_RETRIES = 1  # one retry after server says rate limited
+MCP_RATE_LIMIT_BACKOFF_SECONDS = 5.0
+MCP_MAX_WAIT_SECONDS = 15.0  # fail fast for voice UX if limiter would block longer
+
+READ_TOOLS = frozenset(
+    {
+        "kapruka_search_products",
+        "kapruka_get_product",
+        "kapruka_list_categories",
+        "kapruka_list_delivery_cities",
+        "kapruka_check_delivery",
+    }
+)
+WRITE_TOOLS = frozenset({"kapruka_create_order"})
 
 
 class KaprukaMCPError(Exception):
     """Raised when Kapruka MCP returns an error string."""
+
+
+@dataclass
+class MCPCallRecord:
+    tool: str
+    duration_ms: float
+    cached: bool
+    ok: bool
+    detail: str
+    at: float = field(default_factory=time.time)
+
+
+_call_log: deque[MCPCallRecord] = deque(maxlen=200)
+
+
+def _record_call(
+    *,
+    tool: str,
+    duration_ms: float,
+    cached: bool,
+    ok: bool,
+    detail: str,
+) -> None:
+    record = MCPCallRecord(
+        tool=tool,
+        duration_ms=duration_ms,
+        cached=cached,
+        ok=ok,
+        detail=detail,
+    )
+    _call_log.append(record)
+    logger.info(
+        "MCP #%s %s %s in %.0fms — %s",
+        len(_call_log),
+        tool,
+        "cache" if cached else "network",
+        duration_ms,
+        detail,
+    )
+
+
+def get_mcp_stats() -> dict[str, Any]:
+    """Return recent Kapruka MCP call counters for debugging."""
+    from collections import Counter
+
+    network = [r for r in _call_log if not r.cached]
+    by_tool = Counter(r.tool for r in network)
+    failures = [r for r in _call_log if not r.ok]
+    rate_limits = [r for r in failures if "rate limit" in r.detail.lower()]
+
+    return {
+        "total_logged": len(_call_log),
+        "network_calls": len(network),
+        "cache_hits": sum(1 for r in _call_log if r.cached),
+        "failures": len(failures),
+        "rate_limit_errors": len(rate_limits),
+        "by_tool": dict(by_tool),
+        "recent": [asdict(r) for r in list(_call_log)[-15:]],
+        "limits": {
+            "requests_per_minute": MCP_REQUESTS_PER_MINUTE,
+            "create_order_per_hour": MCP_ORDER_LIMIT_PER_HOUR,
+        },
+    }
+
+
+def reset_mcp_stats() -> None:
+    _call_log.clear()
+
+
+class _SlidingWindowLimiter:
+    """Client-side guard aligned with Kapruka's per-minute / per-hour caps."""
+
+    def __init__(self, max_calls: int, window_seconds: float, *, label: str) -> None:
+        self._max_calls = max_calls
+        self._window_seconds = window_seconds
+        self._label = label
+        self._timestamps: deque[float] = deque()
+
+    def _prune(self, now: float) -> None:
+        while self._timestamps and now - self._timestamps[0] >= self._window_seconds:
+            self._timestamps.popleft()
+
+    async def acquire(self) -> None:
+        while True:
+            now = time.monotonic()
+            self._prune(now)
+            if len(self._timestamps) < self._max_calls:
+                self._timestamps.append(now)
+                return
+
+            wait = self._window_seconds - (now - self._timestamps[0]) + 0.05
+            if wait > MCP_MAX_WAIT_SECONDS:
+                raise KaprukaMCPError(
+                    f"Error: Kapruka {self._label} limit reached. "
+                    f"Please wait {int(wait)} seconds."
+                )
+            logger.info(
+                "Kapruka MCP %s limit (%s/%s); waiting %.1fs",
+                self._label,
+                len(self._timestamps),
+                self._max_calls,
+                wait,
+            )
+            await asyncio.sleep(wait)
 
 
 class _KaprukaMCPClient:
@@ -29,10 +159,23 @@ class _KaprukaMCPClient:
         self._ready = threading.Event()
         self._session: ClientSession | None = None
         self._exit_stack: AsyncExitStack | None = None
+        self._call_lock: asyncio.Lock | None = None
+        self._minute_limiter = _SlidingWindowLimiter(
+            MCP_REQUESTS_PER_MINUTE,
+            60.0,
+            label="60/min",
+        )
+        self._order_limiter = _SlidingWindowLimiter(
+            MCP_ORDER_LIMIT_PER_HOUR,
+            3600.0,
+            label="30 orders/hour",
+        )
+        self._cache: dict[str, tuple[dict[str, Any], float]] = {}
 
     def _run_loop(self) -> None:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
+        self._call_lock = asyncio.Lock()
         self._ready.set()
         self._loop.run_forever()
 
@@ -59,28 +202,175 @@ class _KaprukaMCPClient:
         self._session = session
         return session
 
+    async def _reset_session(self) -> None:
+        self._session = None
+        stack = self._exit_stack
+        self._exit_stack = None
+        if stack is not None:
+            try:
+                await stack.aclose()
+            except Exception:
+                logger.exception("Kapruka MCP session reset failed")
+
     def _run_coro(self, coro: Any) -> Any:
         loop = self._ensure_loop()
         future = asyncio.run_coroutine_threadsafe(coro, loop)
-        return future.result(timeout=120)
+        try:
+            return future.result(timeout=180)
+        except asyncio.CancelledError as exc:
+            raise KaprukaMCPError(
+                "Error: Kapruka request was interrupted. Please try again in a few seconds."
+            ) from exc
+
+    def _cache_key(self, tool_name: str, params: dict[str, Any]) -> str:
+        return f"{tool_name}:{json.dumps(params, sort_keys=True, default=str)}"
+
+    def _cache_ttl(self, tool_name: str) -> float | None:
+        if tool_name in READ_TOOLS:
+            return MCP_READ_CACHE_TTL_SECONDS
+        return None
+
+    def _get_cached(self, tool_name: str, key: str) -> dict[str, Any] | None:
+        ttl = self._cache_ttl(tool_name)
+        if ttl is None:
+            return None
+        cached = self._cache.get(key)
+        if not cached:
+            return None
+        payload, cached_at = cached
+        if time.monotonic() - cached_at > ttl:
+            self._cache.pop(key, None)
+            return None
+        return payload
+
+    async def _acquire_limits(self, tool_name: str) -> None:
+        assert self._call_lock is not None
+        async with self._call_lock:
+            await self._minute_limiter.acquire()
+            if tool_name in WRITE_TOOLS:
+                await self._order_limiter.acquire()
 
     async def _call_tool(self, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
-        session = await self._connect()
+        started = time.perf_counter()
+        cache_key = self._cache_key(tool_name, params)
+        cached = self._get_cached(tool_name, cache_key)
+        if cached is not None:
+            _record_call(
+                tool=tool_name,
+                duration_ms=(time.perf_counter() - started) * 1000,
+                cached=True,
+                ok=True,
+                detail="cache hit",
+            )
+            return cached
+
         payload = {"params": {**params, "response_format": "json"}}
-        result = await session.call_tool(tool_name, payload)
 
-        raw = _extract_result_text(result.content)
-        if raw.startswith("Error:") or raw.startswith("No products found"):
-            raise KaprukaMCPError(raw)
-
+        last_error: KaprukaMCPError | None = None
         try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise KaprukaMCPError(f"Invalid JSON from {tool_name}: {raw[:200]}") from exc
+            for attempt in range(MCP_RATE_LIMIT_RETRIES + 1):
+                session = await self._connect()
+                await self._acquire_limits(tool_name)
+                try:
+                    result = await session.call_tool(tool_name, payload)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    message = str(exc) or type(exc).__name__
+                    is_rate_limit = "429" in message or "Too Many Requests" in message
+                    if is_rate_limit:
+                        last_error = KaprukaMCPError(
+                            "Error: Kapruka rate limit reached. Please wait about a minute."
+                        )
+                        if attempt < MCP_RATE_LIMIT_RETRIES:
+                            logger.warning(
+                                "Kapruka MCP HTTP 429 on %s; retrying in %.0fs",
+                                tool_name,
+                                MCP_RATE_LIMIT_BACKOFF_SECONDS,
+                            )
+                            await asyncio.sleep(MCP_RATE_LIMIT_BACKOFF_SECONDS)
+                            await self._reset_session()
+                            continue
+                        raise last_error
+                    await self._reset_session()
+                    raise KaprukaMCPError(
+                        f"Error: Kapruka MCP connection failed: {message}"
+                    ) from exc
 
-        if not isinstance(parsed, dict):
-            raise KaprukaMCPError(f"Unexpected response type from {tool_name}")
-        return parsed
+                raw = _extract_result_text(result.content)
+
+                if raw.startswith("Error:"):
+                    last_error = KaprukaMCPError(raw)
+                    if "rate limit" in raw.lower() and attempt < MCP_RATE_LIMIT_RETRIES:
+                        logger.warning(
+                            "Kapruka MCP server rate limited %s; retrying in %.0fs",
+                            tool_name,
+                            MCP_RATE_LIMIT_BACKOFF_SECONDS,
+                        )
+                        await asyncio.sleep(MCP_RATE_LIMIT_BACKOFF_SECONDS)
+                        continue
+                    raise last_error
+
+                if raw.startswith("No products found"):
+                    empty = {"results": [], "message": raw}
+                    if self._cache_ttl(tool_name) is not None:
+                        self._cache[cache_key] = (empty, time.monotonic())
+                    _record_call(
+                        tool=tool_name,
+                        duration_ms=(time.perf_counter() - started) * 1000,
+                        cached=False,
+                        ok=True,
+                        detail=raw,
+                    )
+                    return empty
+
+                try:
+                    parsed = json.loads(raw)
+                except json.JSONDecodeError as exc:
+                    raise KaprukaMCPError(f"Invalid JSON from {tool_name}: {raw[:200]}") from exc
+
+                if not isinstance(parsed, dict):
+                    raise KaprukaMCPError(f"Unexpected response type from {tool_name}")
+
+                item_count = len(parsed.get("results") or parsed.get("cities") or [])
+                detail = f"ok ({item_count} items)"
+                if tool_name == "kapruka_list_delivery_cities":
+                    detail = f"ok ({item_count} items) query={params.get('query')!r}"
+
+                # Do not cache empty city lookups — retry variants may succeed.
+                if tool_name == "kapruka_list_delivery_cities" and not (parsed.get("cities") or []):
+                    _record_call(
+                        tool=tool_name,
+                        duration_ms=(time.perf_counter() - started) * 1000,
+                        cached=False,
+                        ok=True,
+                        detail=detail,
+                    )
+                    return parsed
+
+                if self._cache_ttl(tool_name) is not None:
+                    self._cache[cache_key] = (parsed, time.monotonic())
+                _record_call(
+                    tool=tool_name,
+                    duration_ms=(time.perf_counter() - started) * 1000,
+                    cached=False,
+                    ok=True,
+                    detail=detail,
+                )
+                return parsed
+
+            if last_error is not None:
+                raise last_error
+            raise KaprukaMCPError(f"{tool_name} failed without a response")
+        except KaprukaMCPError as exc:
+            _record_call(
+                tool=tool_name,
+                duration_ms=(time.perf_counter() - started) * 1000,
+                cached=False,
+                ok=False,
+                detail=str(exc),
+            )
+            raise
 
     def call_tool_sync(self, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
         return self._run_coro(self._call_tool(tool_name, params))
@@ -107,12 +397,55 @@ def is_perishable_product(product_id: str) -> bool:
     return any(upper.startswith(prefix) for prefix in PERISHABLE_PREFIXES)
 
 
+def _city_search_queries(user_city: str) -> list[str]:
+    """Build MCP query variants for fuzzy city lookup (e.g. 'Colombo 7' -> 'Colombo 07')."""
+    raw = user_city.strip()
+    if not raw:
+        return []
+
+    queries: list[str] = [raw]
+    collapsed = re.sub(r"\s+", " ", raw)
+    if collapsed not in queries:
+        queries.append(collapsed)
+
+    nospace = re.sub(r"\s+", "", raw)
+    if nospace.lower() not in {q.lower() for q in queries}:
+        queries.append(nospace)
+
+    colombo_match = re.match(r"(?i)colombo\s*(\d{1,2})\b", collapsed)
+    if colombo_match:
+        zone = int(colombo_match.group(1))
+        for variant in (
+            f"Colombo {zone:02d}",
+            f"colombo {zone:02d}",
+            f"colombo{zone:02d}",
+            f"colombo{zone}",
+            str(zone),
+        ):
+            if variant.lower() not in {q.lower() for q in queries}:
+                queries.append(variant)
+
+    return queries
+
+
 def resolve_delivery_city(user_city: str) -> str:
     """Resolve a user-provided city to a Kapruka canonical city name."""
-    result = kapruka_list_delivery_cities(query=user_city, limit=5)
-    cities = result.get("cities") or []
+    user_city = user_city.strip()
+    if not user_city:
+        raise KaprukaMCPError("Delivery city is required")
+
+    cities: list[dict[str, Any]] = []
+    for query in _city_search_queries(user_city):
+        result = kapruka_list_delivery_cities(query=query, limit=10)
+        cities = result.get("cities") or []
+        if cities:
+            break
+
     if not cities:
-        raise KaprukaMCPError(f"No delivery cities matched '{user_city}'")
+        raise KaprukaMCPError(
+            f"No delivery cities matched '{user_city}'. "
+            "Try a Kapruka zone name like 'Colombo 07' or 'Kadawatha'."
+        )
 
     query_lower = user_city.lower()
     for city in cities:
@@ -122,6 +455,15 @@ def resolve_delivery_city(user_city: str) -> str:
         aliases = city.get("aliases") or []
         if any(query_lower in alias.lower() or alias.lower() in query_lower for alias in aliases):
             return name
+
+    # Prefer exact Colombo zone when user gave a number (e.g. "Colombo 7").
+    colombo_match = re.match(r"(?i)colombo\s*(\d{1,2})\b", user_city)
+    if colombo_match:
+        zone = int(colombo_match.group(1))
+        target = f"colombo {zone:02d}"
+        for city in cities:
+            if city.get("name", "").lower() == target:
+                return city["name"]
 
     return cities[0]["name"]
 
@@ -177,6 +519,8 @@ def kapruka_list_delivery_cities(
     *,
     limit: int = 25,
 ) -> dict[str, Any]:
+    if isinstance(query, str):
+        query = query.strip() or None
     return _call_tool_sync(
         "kapruka_list_delivery_cities",
         query=query,
