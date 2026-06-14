@@ -2,6 +2,7 @@ import type { CheckoutInfo, CheckoutPayload } from "../types";
 
 interface CheckoutCardProps {
   payload: CheckoutPayload;
+  inline?: boolean;
 }
 
 function formatExpiry(iso: string): string {
@@ -15,24 +16,30 @@ function formatExpiry(iso: string): string {
   }
 }
 
-export function CheckoutCard({ payload }: CheckoutCardProps) {
+export function CheckoutCard({ payload, inline = false }: CheckoutCardProps) {
   const { checkout_url, order_ref, summary, expires_at, checkout_info, cart } = payload;
   const info = checkout_info as CheckoutInfo | undefined;
 
   return (
-    <section className="mx-auto w-full max-w-lg overflow-hidden rounded-2xl border border-emerald-500/30 bg-gradient-to-br from-emerald-950/60 to-slate-900/80 shadow-2xl">
-      <div className="border-b border-emerald-500/20 bg-emerald-500/10 px-6 py-4">
-        <p className="text-xs uppercase tracking-widest text-emerald-300">Ready to pay</p>
-        <h2 className="mt-1 text-2xl font-bold text-white">Your Kapruka checkout</h2>
+    <section
+      className={`w-full overflow-hidden ${
+        inline
+          ? "rounded-2xl rounded-bl-sm border border-[#402970]/15 bg-white shadow-[0_4px_16px_rgba(64,41,112,0.1)]"
+          : "mx-auto max-w-lg rounded-2xl border border-[#402970]/20 bg-white shadow-xl"
+      }`}
+    >
+      <div className="border-b border-[#402970]/10 bg-[#F0EEFA] px-5 py-3">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-[#402970]">Ready to pay</p>
+        <h2 className="mt-0.5 text-lg font-bold text-[#222222]">Your Kapruka checkout</h2>
       </div>
 
-      <div className="space-y-4 p-6">
+      <div className="space-y-3 p-5">
         {cart && cart.length > 0 ? (
-          <ul className="space-y-2 text-sm text-slate-300">
+          <ul className="space-y-1.5 text-sm text-[#494550]">
             {cart.map((item) => (
               <li key={item.product_id} className="flex justify-between gap-2">
                 <span className="truncate">{item.name} × {item.quantity}</span>
-                <span className="shrink-0 text-white">
+                <span className="shrink-0 font-medium text-[#222222]">
                   LKR {(item.price * item.quantity).toLocaleString()}
                 </span>
               </li>
@@ -41,21 +48,21 @@ export function CheckoutCard({ payload }: CheckoutCardProps) {
         ) : null}
 
         {summary ? (
-          <div className="rounded-xl border border-white/10 bg-black/20 p-4 text-sm">
+          <div className="rounded-xl border border-[#402970]/8 bg-[#fcf9f8] p-3 text-sm">
             {summary.items_total != null ? (
-              <div className="flex justify-between text-slate-400">
+              <div className="flex justify-between text-[#494550]">
                 <span>Items</span>
                 <span>LKR {summary.items_total.toLocaleString()}</span>
               </div>
             ) : null}
             {summary.delivery_fee != null ? (
-              <div className="mt-1 flex justify-between text-slate-400">
+              <div className="mt-1 flex justify-between text-[#494550]">
                 <span>Delivery</span>
                 <span>LKR {summary.delivery_fee.toLocaleString()}</span>
               </div>
             ) : null}
             {summary.grand_total != null ? (
-              <div className="mt-3 flex justify-between border-t border-white/10 pt-3 text-lg font-bold text-emerald-300">
+              <div className="mt-2 flex justify-between border-t border-[#402970]/8 pt-2 text-base font-bold text-[#402970]">
                 <span>Total</span>
                 <span>{summary.currency ?? "LKR"} {summary.grand_total.toLocaleString()}</span>
               </div>
@@ -64,22 +71,22 @@ export function CheckoutCard({ payload }: CheckoutCardProps) {
         ) : null}
 
         {info?.recipient?.name || info?.gift_message ? (
-          <div className="rounded-xl border border-pink-500/20 bg-pink-950/20 p-4">
-            <p className="text-xs uppercase tracking-wider text-pink-300">Gift details</p>
+          <div className="rounded-xl border border-[#402970]/8 bg-[#F0EEFA]/50 p-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-[#402970]">Gift details</p>
             {info.recipient?.name ? (
-              <p className="mt-2 text-sm text-white">
+              <p className="mt-1.5 text-sm text-[#222222]">
                 To: {info.recipient.name}
                 {info.recipient.phone ? ` · ${info.recipient.phone}` : ""}
               </p>
             ) : null}
             {info.recipient?.address ? (
-              <p className="text-xs text-slate-400">{info.recipient.address}</p>
+              <p className="text-xs text-[#494550]">{info.recipient.address}</p>
             ) : null}
             {info.sender?.name ? (
-              <p className="mt-1 text-xs text-slate-400">From: {info.sender.name}</p>
+              <p className="mt-1 text-xs text-[#494550]">From: {info.sender.name}</p>
             ) : null}
             {info.gift_message ? (
-              <blockquote className="mt-3 border-l-2 border-pink-400/50 pl-3 text-sm italic text-pink-100">
+              <blockquote className="mt-2 border-l-2 border-[#402970]/30 pl-3 text-sm italic text-[#494550]">
                 &ldquo;{info.gift_message}&rdquo;
               </blockquote>
             ) : null}
@@ -87,14 +94,13 @@ export function CheckoutCard({ payload }: CheckoutCardProps) {
         ) : null}
 
         {order_ref ? (
-          <p className="text-xs text-slate-500">
-            Checkout ref: <span className="font-mono text-slate-300">{order_ref}</span>
-            <span className="block mt-1">Final order number arrives by email after payment.</span>
+          <p className="text-xs text-[#494550]/70">
+            Checkout ref: <span className="font-mono text-[#222222]">{order_ref}</span>
           </p>
         ) : null}
 
         {expires_at ? (
-          <p className="text-xs text-amber-200/80">Pay before {formatExpiry(expires_at)}</p>
+          <p className="text-xs text-[#6f5d00]">Pay before {formatExpiry(expires_at)}</p>
         ) : null}
 
         {checkout_url ? (
@@ -102,12 +108,12 @@ export function CheckoutCard({ payload }: CheckoutCardProps) {
             href={checkout_url}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex w-full items-center justify-center rounded-xl bg-emerald-500 px-4 py-3.5 text-center font-semibold text-slate-950 shadow-lg shadow-emerald-500/20 hover:bg-emerald-400"
+            className="inline-flex w-full items-center justify-center rounded-xl bg-[#FBD614] px-4 py-3 text-center text-sm font-semibold text-[#222222] shadow-sm hover:bg-[#fdd818]"
           >
             Open secure checkout →
           </a>
         ) : (
-          <p className="text-sm text-amber-300">Checkout link not available yet.</p>
+          <p className="text-sm text-[#6f5d00]">Checkout link not available yet.</p>
         )}
       </div>
     </section>

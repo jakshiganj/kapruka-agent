@@ -1,12 +1,14 @@
 {
     "experimentalServices": {
         "frontend": {
-            "root": "frontend",
+            "workspace": "frontend",
             "routePrefix": "/",
             "framework": "vite"
         },
         "backend": {
-            "root": "backend",
+            "workspace": "backend",
+            "framework": "fastapi",
+            "entrypoint": "main.py",
             "routePrefix": "/_/backend"
         }
     }

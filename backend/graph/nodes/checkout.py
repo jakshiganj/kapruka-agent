@@ -8,6 +8,21 @@ from kapruka_mcp.kapruka_tools import KaprukaMCPError, kapruka_create_order
 
 logger = logging.getLogger(__name__)
 
+
+def _is_delivery_network_error(message: str) -> bool:
+    lower = message.lower()
+    return any(
+        token in lower
+        for token in (
+            "city_not_deliverable",
+            "city_not_found",
+            "not in kapruka",
+            "unknown city",
+            "delivery network",
+        )
+    )
+
+
 def checkout_node(state: AgentState) -> dict[str, Any]:
     cart = state.get("cart") or []
     delivery_info = state.get("delivery_info") or {}
@@ -83,12 +98,28 @@ def checkout_node(state: AgentState) -> dict[str, Any]:
         )
     except KaprukaMCPError as exc:
         message = str(exc).removeprefix("Error:").strip()
-        return {
+        updated_delivery = dict(delivery_info)
+        ui_payload = dict((state.get("ui_action") or {}).get("payload") or {})
+        if _is_delivery_network_error(message):
+            updated_delivery["validated"] = "false"
+            updated_delivery.pop("delivery_rate", None)
+        result: dict[str, Any] = {
+            "delivery_info": updated_delivery,
             "voice_prompt": f"I couldn't create the Kapruka checkout link. {message}",
             "next_node": "end",
         }
+        if _is_delivery_network_error(message):
+            result["ui_action"] = {
+                "action": "update_cart",
+                "payload": {
+                    **ui_payload,
+                    "cart": cart,
+                    "delivery_info": updated_delivery,
+                },
+            }
+        return result
 
-    checkout_url = order.get("checkout_url")
+    checkout_url = order.get("checkout_url") or order.get("checkoutUrl") or order.get("payment_url")
     if not checkout_url:
         return {
             "voice_prompt": "Kapruka did not return a checkout link. Please try checkout again.",
@@ -97,18 +128,21 @@ def checkout_node(state: AgentState) -> dict[str, Any]:
 
     logger.info("kapruka_create_order succeeded: %s", checkout_url)
 
+    checkout_result = {
+        "checkout_url": checkout_url,
+        "order_ref": order.get("order_ref") or order.get("orderRef"),
+        "summary": order.get("summary"),
+        "expires_at": order.get("expires_at") or order.get("expiresAt"),
+    }
+
     return {
+        "checkout_result": checkout_result,
         "ui_action": {
             "action": "show_checkout",
-            "payload": {
-                "checkout_url": checkout_url,
-                "order_ref": order.get("order_ref"),
-                "summary": order.get("summary"),
-                "expires_at": order.get("expires_at"),
-            },
+            "payload": checkout_result,
         },
         "voice_prompt": (
-            "I've created your Kapruka guest checkout link. Open it to pay within 60 minutes. "
+            f"Your Kapruka payment link is ready — open it to pay within 60 minutes: {checkout_url} "
             "The reference on screen is for checkout only — your real Kapruka order number "
             "arrives by email after you pay. On the payment page, scroll to Summary if the "
             "top says zero items; your cake should be listed there."

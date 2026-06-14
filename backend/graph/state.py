@@ -9,6 +9,7 @@ class AgentState(TypedDict):
     cart: List[Dict[str, Any]]
     delivery_info: Dict[str, str]
     checkout_info: Dict[str, Any]
+    checkout_result: NotRequired[Dict[str, Any]]
     ui_action: Dict[str, Any]
     voice_prompt: str
     next_node: str

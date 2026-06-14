@@ -2,32 +2,21 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
+from contextlib import suppress
 from typing import Any
 
 from fastapi import WebSocket
-from langchain_core.messages import HumanMessage
 
-from graph.graph import build_graph
-from graph.ui_envelope import enrich_ui_payload
-from kapruka_mcp.kapruka_tools import KaprukaMCPError, get_mcp_stats
-from live.connection_pool import get_session, update_agent_state
+from kapruka_mcp.kapruka_tools import get_mcp_stats
+from live.connection_pool import get_session
 from live.gemini_client import GeminiLiveSession
+from live.text_intent import emit_assistant_text, emit_ui_result, invoke_graph_intent
 
 logger = logging.getLogger(__name__)
 
 HANDOFF_TIMEOUT_SECONDS = 35.0
-
-_graph = None
-
-
-def get_graph():
-    global _graph
-    if _graph is None:
-        _graph = build_graph()
-    return _graph
 
 
 def _parse_tool_args(raw_args: Any) -> dict[str, Any]:
@@ -90,6 +79,11 @@ async def run_intent_handoff(
     pool_session["audio_frozen"] = True
     await websocket.send_json({"type": "control", "action": "mic_pause"})
 
+    with suppress(Exception):
+        await websocket.send_json(
+            {"type": "text", "role": "user", "content": intent_text}
+        )
+
     try:
         await websocket.send_json({"type": "control", "action": "processing"})
     except Exception:
@@ -97,30 +91,16 @@ async def run_intent_handoff(
     logger.info("Handoff started for session %s: %s", session_id, intent_text)
 
     voice_prompt = "Done."
-    ui_action: dict[str, Any] = {}
+    result: dict[str, Any] | None = None
 
     try:
         # Step 3 — Run LangGraph (Model 2)
-        agent_state = dict(pool_session["agent_state"])
-        prior_messages = list(agent_state.get("messages") or [])
-        invoke_state = {
-            **agent_state,
-            "messages": prior_messages + [HumanMessage(content=intent_text)],
-            "voice_mode": True,
-        }
-
-        async def _run_graph() -> dict[str, Any]:
-            async with pool_session["graph_lock"]:
-                return await get_graph().ainvoke(
-                    invoke_state,
-                    config={"configurable": {"thread_id": pool_session["langgraph_thread_id"]}},
-                )
-
-        result = await asyncio.wait_for(_run_graph(), timeout=HANDOFF_TIMEOUT_SECONDS)
-        update_agent_state(session_id, result)
-
-        ui_action = result.get("ui_action") or {}
-        voice_prompt = result.get("voice_prompt") or "Done."
+        result, voice_prompt = await invoke_graph_intent(
+            session_id=session_id,
+            intent_text=intent_text,
+            voice_mode=True,
+            pool_session=pool_session,
+        )
 
         # Step 4 — Return tool response to Model 1 (voice before UI)
         await live_session.send_tool_response(
@@ -130,82 +110,19 @@ async def run_intent_handoff(
         )
         logger.info("Sent tool response to Model 1 for session %s", session_id)
 
+        # Sync voice reply into chat transcript
+        await emit_assistant_text(websocket, voice_prompt)
+
         # Step 5 — Emit UI event to client
-        action = ui_action.get("action")
-        if action:
-            await websocket.send_json(
-                {
-                    "type": "ui",
-                    "action": action,
-                    "payload": enrich_ui_payload(result),
-                }
-            )
-            if action == "show_checkout":
+        if result:
+            await emit_ui_result(websocket, result)
+            ui_action = result.get("ui_action") or {}
+            if ui_action.get("action") == "show_checkout":
                 logger.info(
                     "Emitted checkout link for session %s: %s",
                     session_id,
                     (ui_action.get("payload") or {}).get("checkout_url"),
                 )
-    except asyncio.CancelledError:
-        logger.warning("Handoff cancelled for session %s", session_id)
-        voice_prompt = (
-            "Kapruka search was interrupted. Please try your search again in a moment."
-        )
-        try:
-            await live_session.send_tool_response(
-                call_id=call_id,
-                name=call_name,
-                result=voice_prompt,
-            )
-        except Exception:
-            logger.exception("Failed to send cancelled tool response")
-    except asyncio.TimeoutError:
-        stats = get_mcp_stats()
-        logger.warning(
-            "Handoff timed out for session %s after %.0fs (MCP network calls this session: %s, rate limits: %s)",
-            session_id,
-            HANDOFF_TIMEOUT_SECONDS,
-            stats["network_calls"],
-            stats["rate_limit_errors"],
-        )
-        voice_prompt = (
-            "The Kapruka search took too long to finish. "
-            "This is usually a timeout, not your fault — please try once more in a few seconds."
-        )
-        try:
-            await live_session.send_tool_response(
-                call_id=call_id,
-                name=call_name,
-                result=voice_prompt,
-            )
-            logger.info("Sent timeout tool response to Model 1 for session %s", session_id)
-        except Exception:
-            logger.exception("Failed to send timeout tool response")
-    except KaprukaMCPError as exc:
-        message = str(exc).removeprefix("Error:").strip()
-        is_rate_limit = "rate limit" in message.lower()
-        logger.warning(
-            "Kapruka MCP error during handoff for session %s (%s): %s",
-            session_id,
-            "rate limit" if is_rate_limit else "api error",
-            message,
-        )
-        if is_rate_limit:
-            voice_prompt = (
-                "Kapruka's rate limit was hit. "
-                "Please wait about a minute before searching again."
-            )
-        else:
-            voice_prompt = f"Kapruka returned an error: {message}"
-        try:
-            await live_session.send_tool_response(
-                call_id=call_id,
-                name=call_name,
-                result=voice_prompt,
-            )
-            logger.info("Sent MCP error tool response to Model 1 for session %s", session_id)
-        except Exception:
-            logger.exception("Failed to send MCP error tool response")
     except Exception:
         logger.exception("Handoff failed for session %s", session_id)
         voice_prompt = (
@@ -218,6 +135,7 @@ async def run_intent_handoff(
                 name=call_name,
                 result=voice_prompt,
             )
+            await emit_assistant_text(websocket, voice_prompt)
             logger.info("Sent error tool response to Model 1 for session %s", session_id)
         except Exception:
             logger.exception("Failed to send error tool response")

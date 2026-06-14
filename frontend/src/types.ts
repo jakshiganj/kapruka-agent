@@ -81,7 +81,14 @@ export interface AudioEnvelope {
   data: string;
 }
 
-export type ControlAction = "mic_pause" | "mic_resume" | "processing" | "error";
+export type ControlAction =
+  | "mic_pause"
+  | "mic_resume"
+  | "processing"
+  | "error"
+  | "session_ready"
+  | "live_ready"
+  | "live_error";
 
 export interface ControlEnvelope {
   type: "control";
@@ -89,7 +96,50 @@ export interface ControlEnvelope {
   message?: string;
 }
 
-export type ServerEnvelope = UiEnvelope | AudioEnvelope | ControlEnvelope;
+export type ChatRole = "user" | "assistant";
+
+export type ChatMessageKind =
+  | "text"
+  | "products"
+  | "checkout"
+  | "delivery"
+  | "cart_notice";
+
+export type ChatMessageStatus = "streaming" | "final";
+
+export interface ChatMessage {
+  id: string;
+  role: ChatRole;
+  kind: ChatMessageKind;
+  content?: string;
+  status?: ChatMessageStatus;
+  products?: Product[];
+  searchQuery?: string;
+  searchError?: string;
+  checkoutPayload?: CheckoutPayload;
+  delivery?: DeliveryInfo;
+  cartItemName?: string;
+}
+
+export interface TextEnvelope {
+  type: "text";
+  role: ChatRole;
+  content: string;
+}
+
+export interface TranscriptEnvelope {
+  type: "transcript";
+  role: ChatRole;
+  content: string;
+  final?: boolean;
+}
+
+export type ServerEnvelope =
+  | UiEnvelope
+  | AudioEnvelope
+  | ControlEnvelope
+  | TextEnvelope
+  | TranscriptEnvelope;
 
 export interface UiState {
   action: UiActionType;

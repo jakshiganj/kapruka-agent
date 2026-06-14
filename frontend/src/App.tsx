@@ -1,13 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CartDrawer } from "./components/CartDrawer";
-import { CheckoutCard } from "./components/CheckoutCard";
-import { DeliveryBanner } from "./components/DeliveryBanner";
-import { OrderProgress } from "./components/OrderProgress";
-import { ProductCarousel } from "./components/ProductCarousel";
-import { VoiceIndicator } from "./components/VoiceIndicator";
+import { ChatPanel } from "./components/ChatPanel";
 import { useAudioSession } from "./hooks/useAudioSession";
 import { useLiveAgent } from "./hooks/useLiveAgent";
-import type { CheckoutPayload, Product, ShowProductsPayload } from "./types";
+import type { Product } from "./types";
 
 function createSessionId(): string {
   return crypto.randomUUID();
@@ -16,9 +12,12 @@ function createSessionId(): string {
 export default function App() {
   const sessionId = useMemo(() => createSessionId(), []);
   const [cartOpen, setCartOpen] = useState(false);
+  const [micActive, setMicActive] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState<string | undefined>();
   const sendBinaryRef = useRef<(data: ArrayBuffer) => void>(() => {});
   const sendControlRef = useRef<(payload: Record<string, unknown>) => void>(() => {});
+  const pendingMicRef = useRef(false);
+  const micActiveRef = useRef(false);
 
   const audio = useAudioSession({
     onPcmChunk: (chunk) => sendBinaryRef.current(chunk),
@@ -29,16 +28,22 @@ export default function App() {
     onInboundAudio: (base64) => {
       void audio.playPcmBase64(base64);
     },
-    onConnected: () => {
-      void audio.startCapture();
-    },
     onControl: (action) => {
       if (action === "processing") {
         audio.setVoicePhase("processing");
       } else if (action === "mic_pause") {
         audio.pauseMicUpload();
-      } else {
+      } else if (action === "mic_resume") {
         audio.resumeMicUpload();
+      } else if (action === "live_ready" && pendingMicRef.current) {
+        pendingMicRef.current = false;
+        setMicActive(true);
+        micActiveRef.current = true;
+      } else if (action === "live_error") {
+        pendingMicRef.current = false;
+        setMicActive(false);
+        micActiveRef.current = false;
+        void audio.stopCapture();
       }
     },
   });
@@ -53,17 +58,50 @@ export default function App() {
   }, [live]);
 
   const handleDisconnect = useCallback(() => {
-    audio.stopCapture();
+    if (micActiveRef.current) {
+      live.sendVoiceControl("voice_stop");
+    }
+    void audio.stopCapture();
+    setMicActive(false);
+    micActiveRef.current = false;
+    pendingMicRef.current = false;
     live.disconnect();
   }, [audio, live]);
 
+  const handleToggleMic = useCallback(async () => {
+    if (live.connectionState !== "connected") {
+      return;
+    }
+
+    if (!micActiveRef.current && !pendingMicRef.current) {
+      try {
+        await audio.startCapture();
+        if (live.liveReady) {
+          setMicActive(true);
+          micActiveRef.current = true;
+        } else {
+          pendingMicRef.current = true;
+        }
+        live.sendVoiceControl("voice_start");
+      } catch {
+        pendingMicRef.current = false;
+        live.sendVoiceControl("voice_stop");
+        setMicActive(false);
+        micActiveRef.current = false;
+      }
+      return;
+    }
+
+    pendingMicRef.current = false;
+    live.sendVoiceControl("voice_stop");
+    await audio.stopCapture();
+    setMicActive(false);
+    micActiveRef.current = false;
+  }, [audio, live]);
+
   const { session } = live;
-  const products = session.products;
   const cart = session.cart;
-  const searchQuery = session.search_query;
   const selectedId = selectedProductId ?? session.selected_product?.id;
-  const payload = live.uiState.payload as ShowProductsPayload | null;
-  const searchError = payload?.error;
 
   const handleSelectProduct = useCallback((product: Product) => {
     setSelectedProductId(product.id);
@@ -86,16 +124,18 @@ export default function App() {
   const itemCount = cart.reduce((n, i) => n + i.quantity, 0);
 
   return (
-    <div className="flex min-h-full flex-col bg-[radial-gradient(ellipse_at_top,_#0f172a_0%,_#070b14_50%,_#050810_100%)]">
-      <header className="sticky top-0 z-30 border-b border-white/10 bg-slate-950/80 px-4 py-3 backdrop-blur md:px-8">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
+    <div className="flex h-full flex-col bg-[#fcf9f8]">
+      <header className="sticky top-0 z-30 border-b border-[#402970]/8 bg-white/90 px-4 py-3 backdrop-blur-md md:px-6">
+        <div className="mx-auto flex max-w-[800px] items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500 text-lg font-bold text-slate-950">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#402970] text-lg font-bold text-white shadow-[0_2px_8px_rgba(64,41,112,0.2)]">
               K
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-[0.25em] text-emerald-400">Kapruka Agent</p>
-              <h1 className="text-base font-semibold text-white md:text-lg">Kapru · Gift Assistant</h1>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#402970]/70">
+                Kapruka
+              </p>
+              <h1 className="text-base font-semibold text-[#222222] md:text-lg">Kapru · Gift Assistant</h1>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -103,7 +143,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setCartOpen(true)}
-                className="relative rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white hover:bg-white/10"
+                className="relative rounded-full border border-[#402970]/12 bg-[#F0EEFA] px-4 py-2 text-sm font-medium text-[#402970] transition-colors hover:bg-[#402970]/8"
               >
                 🛒 Cart{itemCount > 0 ? ` · ${itemCount}` : ""}
               </button>
@@ -112,81 +152,31 @@ export default function App() {
               <button
                 type="button"
                 onClick={handleDisconnect}
-                className="rounded-xl bg-red-500/20 px-4 py-2 text-sm font-medium text-red-200 hover:bg-red-500/30"
+                className="rounded-full border border-[#ba1a1a]/20 bg-[#ffdad6]/50 px-4 py-2 text-sm font-medium text-[#ba1a1a] hover:bg-[#ffdad6]"
               >
                 End
               </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handleConnect}
-                disabled={live.connectionState === "connecting"}
-                className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-60"
-              >
-                {live.connectionState === "connecting" ? "Connecting…" : "Start voice"}
-              </button>
-            )}
+            ) : null}
           </div>
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-6 md:gap-8 md:px-8 md:py-8">
-        <OrderProgress session={session} action={live.uiState.action} />
-
-        <div className="flex flex-col items-center gap-6 rounded-3xl border border-white/10 bg-white/[0.03] px-6 py-8 shadow-inner">
-          <VoiceIndicator phase={audio.voicePhase} level={audio.level} connected={connected} />
-          {live.error ? <p className="text-sm text-red-300">{live.error}</p> : null}
-        </div>
-
-        {(session.delivery_info?.city || session.delivery_info?.date) ? (
-          <DeliveryBanner delivery={session.delivery_info} />
-        ) : null}
-
-        {products.length > 0 || live.uiState.action === "show_products" ? (
-          <ProductCarousel
-            products={products}
-            searchQuery={searchQuery}
-            selectedId={selectedId}
-            error={searchError}
-            onSelect={connected ? handleSelectProduct : undefined}
-          />
-        ) : null}
-
-        {live.uiState.action === "update_cart" && cart.length > 0 ? (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sky-500/20 bg-sky-950/30 px-4 py-3 text-sm text-sky-100">
-            <span>
-              Added {cart[cart.length - 1]?.name} — browse more gifts or tell Kapru your delivery city and date to
-              checkout.
-            </span>
-            <button type="button" className="font-medium underline" onClick={() => setCartOpen(true)}>
-              View cart
-            </button>
-          </div>
-        ) : null}
-
-        {live.uiState.action === "show_checkout" && live.uiState.payload ? (
-          <CheckoutCard payload={live.uiState.payload as CheckoutPayload} />
-        ) : null}
-
-        {!connected && products.length === 0 ? (
-          <section className="grid gap-4 md:grid-cols-3">
-            {[
-              { emoji: "🎂", title: "Cakes & treats", hint: "Chocolate cake to Kadawatha" },
-              { emoji: "💐", title: "Flowers & hampers", hint: "Also add flowers to cart" },
-              { emoji: "🎁", title: "Gift messages", hint: "Wish amma a happy birthday" },
-            ].map((tip) => (
-              <div
-                key={tip.title}
-                className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 text-center"
-              >
-                <p className="text-3xl">{tip.emoji}</p>
-                <p className="mt-2 font-medium text-white">{tip.title}</p>
-                <p className="mt-1 text-xs text-slate-500">&ldquo;{tip.hint}&rdquo;</p>
-              </div>
-            ))}
-          </section>
-        ) : null}
-      </main>
+      <ChatPanel
+        messages={live.messages}
+        connected={connected}
+        processing={live.processing}
+        error={live.error}
+        voicePhase={audio.voicePhase}
+        voiceLevel={audio.level}
+        micActive={micActive}
+        onSend={live.sendTextMessage}
+        onMicToggle={() => void handleToggleMic()}
+        onConnect={handleConnect}
+        connecting={live.connectionState === "connecting"}
+        selectedProductId={selectedId}
+        onSelectProduct={connected ? handleSelectProduct : undefined}
+        onOpenCart={() => setCartOpen(true)}
+      />
 
       <CartDrawer
         open={cartOpen}

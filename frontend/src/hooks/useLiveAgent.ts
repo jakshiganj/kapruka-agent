@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  ChatMessage,
+  ChatRole,
+  CheckoutPayload,
   ConnectionState,
   ControlAction,
+  DeliveryInfo,
+  Product,
   SessionSnapshot,
   ServerEnvelope,
+  ShowProductsPayload,
   UiPayload,
   UiState,
 } from "../types";
@@ -67,9 +73,214 @@ const EMPTY_SESSION: SessionSnapshot = {
   products: [],
 };
 
+function createMessageId(): string {
+  return crypto.randomUUID();
+}
+
+function extractCheckoutPayload(payload: UiPayload | null): CheckoutPayload | null {
+  const record = payload as CheckoutPayload | null;
+  if (!record?.checkout_url) {
+    return null;
+  }
+  return record;
+}
+
+function mergeStreamingChunk(prev: string, chunk: string): string {
+  if (!prev) {
+    return chunk;
+  }
+  if (chunk.startsWith(prev)) {
+    return chunk;
+  }
+  if (prev.startsWith(chunk)) {
+    return prev;
+  }
+  const needsSpace = !prev.endsWith(" ") && !chunk.startsWith(" ");
+  return needsSpace ? `${prev} ${chunk}` : `${prev}${chunk}`;
+}
+
+function finalizeStreamingMessages(
+  messages: ChatMessage[],
+  role?: ChatRole,
+): ChatMessage[] {
+  return messages.map((message) => {
+    if (message.kind !== "text" || message.status !== "streaming") {
+      return message;
+    }
+    if (role && message.role !== role) {
+      return message;
+    }
+    return { ...message, status: "final" };
+  });
+}
+
+function findLastTextIndex(messages: ChatMessage[], role: ChatRole): number {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const msg = messages[i];
+    if (msg?.kind === "text" && msg.role === role) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function shouldStartNewTranscriptBubble(
+  messages: ChatMessage[],
+  role: ChatRole,
+): boolean {
+  if (messages.length === 0) {
+    return true;
+  }
+  const last = messages[messages.length - 1];
+  if (!last || last.kind !== "text") {
+    return true;
+  }
+  return last.role !== role;
+}
+
+function updateTextMessage(
+  messages: ChatMessage[],
+  index: number,
+  content: string,
+  status: ChatMessage["status"],
+): ChatMessage[] {
+  const existing = messages[index];
+  if (!existing) {
+    return messages;
+  }
+  const updated: ChatMessage = {
+    ...existing,
+    content,
+    status,
+  };
+  return [...messages.slice(0, index), updated, ...messages.slice(index + 1)];
+}
+
+function findLastStreamingTextIndex(messages: ChatMessage[], role: ChatRole): number {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const msg = messages[i];
+    if (msg?.kind === "text" && msg.role === role && msg.status === "streaming") {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function normalizeSearchQuery(query: string | undefined): string {
+  return (query ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function findLastProductsMessage(messages: ChatMessage[]): ChatMessage | undefined {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]?.kind === "products") {
+      return messages[i];
+    }
+  }
+  return undefined;
+}
+
+function deliveryFingerprint(delivery: DeliveryInfo | undefined): string {
+  if (!delivery) {
+    return "";
+  }
+  return [
+    delivery.city ?? "",
+    delivery.date ?? "",
+    delivery.validated ?? "",
+    delivery.delivery_rate ?? "",
+  ].join("|");
+}
+
+function findLastDeliveryMessage(messages: ChatMessage[]): ChatMessage | undefined {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]?.kind === "delivery") {
+      return messages[i];
+    }
+  }
+  return undefined;
+}
+
+function buildRichMessages(
+  action: string,
+  payload: UiPayload,
+  prevCartLength: number,
+  prevMessages: ChatMessage[],
+  sessionProducts: Product[] = [],
+  sessionSearchQuery?: string,
+): ChatMessage[] {
+  const messages: ChatMessage[] = [];
+  const payloadProducts = payload.products ?? [];
+  const searchQuery = payload.search_query ?? sessionSearchQuery;
+  const products =
+    payloadProducts.length > 0
+      ? payloadProducts
+      : action === "show_products"
+        ? sessionProducts
+        : payloadProducts;
+  const lastProducts = findLastProductsMessage(prevMessages);
+  const searchChanged =
+    !!searchQuery &&
+    normalizeSearchQuery(searchQuery) !== normalizeSearchQuery(lastProducts?.searchQuery);
+
+  const shouldShowProducts =
+    action === "show_products" || (products.length > 0 && searchChanged);
+
+  if (shouldShowProducts) {
+    const showPayload = payload as ShowProductsPayload;
+    messages.push({
+      id: createMessageId(),
+      role: "assistant",
+      kind: "products",
+      products: [...products],
+      searchQuery,
+      searchError: showPayload.error,
+    });
+  }
+
+  if (action === "show_checkout") {
+    const checkout = payload as CheckoutPayload;
+    if (checkout.checkout_url) {
+      messages.push({
+        id: createMessageId(),
+        role: "assistant",
+        kind: "checkout",
+        checkoutPayload: checkout,
+      });
+    }
+  }
+
+  if (action === "update_cart") {
+    const cart = payload.cart ?? [];
+    if (cart.length > prevCartLength && cart.length > 0) {
+      messages.push({
+        id: createMessageId(),
+        role: "assistant",
+        kind: "cart_notice",
+        cartItemName: cart[cart.length - 1]?.name,
+      });
+    }
+  }
+
+  const delivery = payload.delivery_info;
+  const lastDelivery = findLastDeliveryMessage(prevMessages);
+  const deliveryChanged =
+    deliveryFingerprint(delivery) !== deliveryFingerprint(lastDelivery?.delivery);
+
+  if ((delivery?.city || delivery?.date) && deliveryChanged) {
+    messages.push({
+      id: createMessageId(),
+      role: "assistant",
+      kind: "delivery",
+      delivery,
+    });
+  }
+
+  return messages;
+}
+
 export interface UseLiveAgentOptions {
   sessionId: string;
-  onInboundAudio: (base64: string) => void;
+  onInboundAudio?: (base64: string) => void;
   onConnected?: () => void;
   onControl?: (action: ControlAction) => void;
 }
@@ -78,11 +289,17 @@ export interface UseLiveAgentResult {
   connectionState: ConnectionState;
   uiState: UiState;
   session: SessionSnapshot;
+  checkoutPayload: CheckoutPayload | null;
+  messages: ChatMessage[];
+  processing: boolean;
+  liveReady: boolean;
   error: string | null;
   connect: () => void;
   disconnect: () => void;
   sendBinary: (data: ArrayBuffer) => void;
   sendControl: (payload: Record<string, unknown>) => void;
+  sendTextMessage: (text: string) => void;
+  sendVoiceControl: (action: "voice_start" | "voice_stop") => void;
 }
 
 export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
@@ -92,11 +309,91 @@ export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
   const onInboundAudioRef = useRef(onInboundAudio);
   const onConnectedRef = useRef(onConnected);
   const onControlRef = useRef(onControl);
+  const sessionRef = useRef<SessionSnapshot>(EMPTY_SESSION);
 
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
   const [uiState, setUiState] = useState<UiState>({ action: null, payload: null });
   const [session, setSession] = useState<SessionSnapshot>(EMPTY_SESSION);
+  const [checkoutPayload, setCheckoutPayload] = useState<CheckoutPayload | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [processing, setProcessing] = useState(false);
+  const [liveReady, setLiveReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+
+  const upsertTranscript = useCallback((role: ChatRole, content: string, final: boolean) => {
+    setMessages((prev) => {
+      const streamingIdx = findLastStreamingTextIndex(prev, role);
+
+      if (streamingIdx >= 0) {
+        const existing = prev[streamingIdx];
+        const merged = mergeStreamingChunk(existing.content ?? "", content);
+        return updateTextMessage(prev, streamingIdx, merged, final ? "final" : "streaming");
+      }
+
+      if (!shouldStartNewTranscriptBubble(prev, role)) {
+        const lastIdx = findLastTextIndex(prev, role);
+        if (lastIdx >= 0) {
+          const existing = prev[lastIdx];
+          const merged = mergeStreamingChunk(existing?.content ?? "", content);
+          return updateTextMessage(prev, lastIdx, merged, final ? "final" : "streaming");
+        }
+      }
+
+      return [
+        ...prev,
+        {
+          id: createMessageId(),
+          role,
+          kind: "text",
+          content,
+          status: final ? "final" : "streaming",
+        },
+      ];
+    });
+  }, []);
+
+  const finalizeOrAppendText = useCallback((role: ChatRole, content: string) => {
+    setMessages((prev) => {
+      const finalized = finalizeStreamingMessages(prev, role);
+
+      const lastTextIdx = findLastTextIndex(finalized, role);
+      if (
+        lastTextIdx >= 0 &&
+        finalized[lastTextIdx]?.status === "final" &&
+        finalized[lastTextIdx]?.content === content
+      ) {
+        return finalized;
+      }
+
+      return [
+        ...finalized,
+        {
+          id: createMessageId(),
+          role,
+          kind: "text",
+          content,
+          status: "final",
+        },
+      ];
+    });
+  }, []);
+
+  const appendUserText = useCallback((content: string) => {
+    setMessages((prev) => [
+      ...finalizeStreamingMessages(prev, "user"),
+      {
+        id: createMessageId(),
+        role: "user",
+        kind: "text",
+        content,
+        status: "final",
+      },
+    ]);
+  }, []);
 
   useEffect(() => {
     onInboundAudioRef.current = onInboundAudio;
@@ -116,10 +413,34 @@ export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
     }
   }, []);
 
+  const sendTextMessage = useCallback(
+    (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed || wsRef.current?.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      appendUserText(trimmed);
+      sendControl({ type: "text_message", text: trimmed });
+    },
+    [appendUserText, sendControl],
+  );
+
+  const sendVoiceControl = useCallback(
+    (action: "voice_start" | "voice_stop") => {
+      sendControl({ type: action });
+      if (action === "voice_stop") {
+        setLiveReady(false);
+      }
+    },
+    [sendControl],
+  );
+
   const disconnect = useCallback(() => {
     wsRef.current?.close();
     wsRef.current = null;
     setConnectionState("disconnected");
+    setProcessing(false);
+    setLiveReady(false);
   }, []);
 
   const connect = useCallback(() => {
@@ -148,13 +469,57 @@ export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
       try {
         const envelope = JSON.parse(event.data) as ServerEnvelope;
         if (envelope.type === "audio") {
-          onInboundAudioRef.current(envelope.data);
+          onInboundAudioRef.current?.(envelope.data);
+        } else if (envelope.type === "transcript") {
+          upsertTranscript(envelope.role, envelope.content, envelope.final ?? false);
+        } else if (envelope.type === "text") {
+          finalizeOrAppendText(envelope.role, envelope.content);
         } else if (envelope.type === "ui") {
           const payload = envelope.payload as UiPayload;
+          const prevCartLength = sessionRef.current.cart.length;
+          const merged = mergeSession(sessionRef.current, payload, envelope.action);
+          sessionRef.current = merged;
           setUiState({ action: envelope.action, payload });
-          setSession((prev) => mergeSession(prev, payload, envelope.action));
+          setSession(merged);
+          setMessages((msgPrev) => {
+            const richMessages = buildRichMessages(
+              envelope.action,
+              payload,
+              prevCartLength,
+              msgPrev,
+              merged.products,
+              merged.search_query,
+            );
+            return richMessages.length > 0 ? [...msgPrev, ...richMessages] : msgPrev;
+          });
+          const checkout = extractCheckoutPayload(payload);
+          if (checkout) {
+            setCheckoutPayload((prev) => ({
+              ...prev,
+              ...checkout,
+              cart: checkout.cart?.length ? checkout.cart : prev?.cart,
+              delivery_info: checkout.delivery_info ?? prev?.delivery_info,
+              checkout_info: checkout.checkout_info ?? prev?.checkout_info,
+            }));
+          }
         } else if (envelope.type === "control") {
-          if (envelope.action === "error" && envelope.message) {
+          if (envelope.action === "processing") {
+            setProcessing(true);
+            setMessages((prev) => finalizeStreamingMessages(prev));
+          } else if (envelope.action === "mic_resume") {
+            setProcessing(false);
+            setMessages((prev) => finalizeStreamingMessages(prev));
+          } else if (envelope.action === "session_ready") {
+            setProcessing(false);
+          } else if (envelope.action === "live_ready") {
+            setLiveReady(true);
+            setError(null);
+          } else if (envelope.action === "live_error") {
+            setLiveReady(false);
+            if (envelope.message) {
+              setError(envelope.message);
+            }
+          } else if (envelope.action === "error" && envelope.message) {
             setError(envelope.message);
             setConnectionState("error");
           }
@@ -173,8 +538,10 @@ export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
     ws.onclose = () => {
       wsRef.current = null;
       setConnectionState("disconnected");
+      setProcessing(false);
+      setLiveReady(false);
     };
-  }, [sessionId]);
+  }, [finalizeOrAppendText, sessionId, upsertTranscript]);
 
   useEffect(() => {
     return () => {
@@ -186,10 +553,16 @@ export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
     connectionState,
     uiState,
     session,
+    checkoutPayload,
+    messages,
+    processing,
+    liveReady,
     error,
     connect,
     disconnect,
     sendBinary,
     sendControl,
+    sendTextMessage,
+    sendVoiceControl,
   };
 }

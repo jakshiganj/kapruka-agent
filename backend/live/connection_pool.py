@@ -51,6 +51,7 @@ def _empty_agent_state() -> AgentState:
         "cart": [],
         "delivery_info": {},
         "checkout_info": {},
+        "checkout_result": {},
         "ui_action": {},
         "voice_prompt": "",
         "next_node": "discovery",

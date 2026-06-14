@@ -90,6 +90,8 @@ def build_live_config() -> types.LiveConnectConfig:
         ),
         system_instruction=SYSTEM_INSTRUCTION,
         tools=[SEND_INTENT_TOOL],
+        input_audio_transcription=types.AudioTranscriptionConfig(),
+        output_audio_transcription=types.AudioTranscriptionConfig(),
     )
 
 

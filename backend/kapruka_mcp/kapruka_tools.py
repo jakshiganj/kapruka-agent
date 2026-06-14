@@ -428,6 +428,37 @@ def _city_search_queries(user_city: str) -> list[str]:
     return queries
 
 
+def _city_name_matches(user_city: str, city: dict[str, Any]) -> bool:
+    """Return True when user_city clearly refers to a Kapruka delivery zone."""
+    query_lower = user_city.lower().strip()
+    if not query_lower:
+        return False
+
+    name = str(city.get("name", "")).lower()
+    if name == query_lower:
+        return True
+    if len(query_lower) >= 4 and (query_lower in name or name in query_lower):
+        return True
+
+    for alias in city.get("aliases") or []:
+        alias_lower = str(alias).lower().strip()
+        if not alias_lower:
+            continue
+        if alias_lower == query_lower:
+            return True
+        for token in re.split(r"[\s,/]+", alias_lower):
+            token = token.strip()
+            if len(token) < 4:
+                continue
+            if token == query_lower:
+                return True
+            if len(token) >= 5 and len(query_lower) >= 5 and (
+                token in query_lower or query_lower in token
+            ):
+                return True
+    return False
+
+
 def resolve_delivery_city(user_city: str) -> str:
     """Resolve a user-provided city to a Kapruka canonical city name."""
     user_city = user_city.strip()
@@ -447,14 +478,9 @@ def resolve_delivery_city(user_city: str) -> str:
             "Try a Kapruka zone name like 'Colombo 07' or 'Kadawatha'."
         )
 
-    query_lower = user_city.lower()
     for city in cities:
-        name = city.get("name", "")
-        if name.lower() == query_lower:
-            return name
-        aliases = city.get("aliases") or []
-        if any(query_lower in alias.lower() or alias.lower() in query_lower for alias in aliases):
-            return name
+        if _city_name_matches(user_city, city):
+            return city["name"]
 
     # Prefer exact Colombo zone when user gave a number (e.g. "Colombo 7").
     colombo_match = re.match(r"(?i)colombo\s*(\d{1,2})\b", user_city)
@@ -465,7 +491,11 @@ def resolve_delivery_city(user_city: str) -> str:
             if city.get("name", "").lower() == target:
                 return city["name"]
 
-    return cities[0]["name"]
+    suggestions = ", ".join(city.get("name", "") for city in cities[:5] if city.get("name"))
+    raise KaprukaMCPError(
+        f"'{user_city}' doesn't match a Kapruka delivery zone closely enough. "
+        f"Did you mean: {suggestions}?"
+    )
 
 
 def kapruka_search_products(

@@ -200,6 +200,18 @@ def _extract_checkout_from_text(user_text: str, checkout_info: dict[str, Any]) -
             flags=re.IGNORECASE,
         )[0].strip()
 
+    if not recipient_address:
+        street_match = re.search(
+            r"(?:phone|mobile|number|contact)\s*[:\s]*(?:\+94|0)?7\d{8}\s*[,;]\s*(.{5,120}?)"
+            r"(?:,\s*(?:from|sender|recipient)\b|$)",
+            user_text,
+            re.IGNORECASE,
+        )
+        if street_match:
+            candidate = street_match.group(1).strip().rstrip(".,;")
+            if re.search(r"\d", candidate) and not _is_placeholder_address(candidate):
+                recipient_address = candidate
+
     return _merge_checkout_info(
         checkout_info,
         recipient_name=recipient_name,
@@ -317,10 +329,18 @@ def _apply_router_decision(
     ui_action: dict[str, Any],
     checkout_info: dict[str, Any],
 ) -> dict[str, Any]:
+    prior_city = delivery_info.get("city")
+    prior_date = delivery_info.get("date")
     if decision.delivery_city:
         delivery_info["city"] = decision.delivery_city
     if decision.delivery_date:
         delivery_info["date"] = decision.delivery_date
+    if decision.delivery_city and decision.delivery_city != prior_city:
+        delivery_info.pop("validated", None)
+        delivery_info.pop("delivery_rate", None)
+    if decision.delivery_date and decision.delivery_date != prior_date:
+        delivery_info.pop("validated", None)
+        delivery_info.pop("delivery_rate", None)
 
     checkout_info = _merge_checkout_info(
         checkout_info,
@@ -405,8 +425,10 @@ def router_node(state: AgentState) -> dict[str, Any]:
     extracted = _extract_delivery_from_text(user_text)
     if extracted.get("city") and extracted.get("city") != delivery_info.get("city"):
         delivery_info.pop("validated", None)
+        delivery_info.pop("delivery_rate", None)
     if extracted.get("date") and extracted.get("date") != delivery_info.get("date"):
         delivery_info.pop("validated", None)
+        delivery_info.pop("delivery_rate", None)
     delivery_info.update({k: v for k, v in extracted.items() if v})
 
     checkout_info = _extract_checkout_from_text(
@@ -466,7 +488,9 @@ def router_node(state: AgentState) -> dict[str, Any]:
     ):
         payload["search_query"] = pending_query
         payload.pop("selected_product", None)
+        payload.pop("products", None)
         ui_action["payload"] = payload
+        ui_action["action"] = "show_products"
         logger.info("Router new search with cart -> discovery (%s)", pending_query)
         return {
             "next_node": "discovery",
@@ -510,7 +534,10 @@ def router_node(state: AgentState) -> dict[str, Any]:
                 and not carousel_pick
             ):
                 payload["search_query"] = followup
+                payload.pop("products", None)
+                payload.pop("selected_product", None)
                 ui_action["payload"] = payload
+                ui_action["action"] = "show_products"
                 logger.info("Router add via new search -> discovery")
                 return {
                     "next_node": "discovery",
@@ -552,7 +579,10 @@ def router_node(state: AgentState) -> dict[str, Any]:
             "delivery_info": delivery_info,
             "checkout_info": checkout_info,
         }
-        if search_query:
+        state_ui = state.get("ui_action") or {}
+        if state_ui.get("action") == "show_products":
+            updates["ui_action"] = state_ui
+        elif search_query:
             updates["ui_action"] = ui_action
         if deterministic == "end":
             if state.get("voice_prompt") and (state.get("ui_action") or {}).get("action") == "show_products":
@@ -604,7 +634,9 @@ def router_node(state: AgentState) -> dict[str, Any]:
             payload = dict(payload)
             payload["search_query"] = pending_query
             payload.pop("selected_product", None)
+            payload.pop("products", None)
             ui_action["payload"] = payload
+            ui_action["action"] = "show_products"
             return {
                 "next_node": "discovery",
                 "delivery_info": delivery_info,

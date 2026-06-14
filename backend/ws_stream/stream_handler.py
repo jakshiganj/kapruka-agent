@@ -14,11 +14,57 @@ from fastapi import WebSocket, WebSocketDisconnect
 from config import settings
 from live.connection_pool import get_or_create_session, update_agent_state
 from live.gemini_client import GeminiLiveSession
-from live.handoff import get_graph, run_intent_handoff
-from graph.ui_envelope import enrich_ui_payload
-from langchain_core.messages import HumanMessage
+from live.handoff import run_intent_handoff
+from live.text_intent import TextIntentBusyError, emit_assistant_text, run_text_intent
 
 logger = logging.getLogger(__name__)
+
+
+async def _emit_transcription(
+    websocket: WebSocket,
+    *,
+    role: str,
+    content: str,
+    final: bool,
+) -> None:
+    if not content:
+        return
+    with suppress(Exception):
+        await websocket.send_json(
+            {
+                "type": "transcript",
+                "role": role,
+                "content": content,
+                "final": final,
+            }
+        )
+
+
+async def _forward_transcriptions(
+    websocket: WebSocket,
+    message: Any,
+) -> None:
+    server_content = getattr(message, "server_content", None)
+    if not server_content:
+        return
+
+    input_tx = getattr(server_content, "input_transcription", None)
+    if input_tx and getattr(input_tx, "text", None):
+        await _emit_transcription(
+            websocket,
+            role="user",
+            content=input_tx.text,
+            final=bool(getattr(input_tx, "finished", False)),
+        )
+
+    output_tx = getattr(server_content, "output_transcription", None)
+    if output_tx and getattr(output_tx, "text", None):
+        await _emit_transcription(
+            websocket,
+            role="assistant",
+            content=output_tx.text,
+            final=bool(getattr(output_tx, "finished", False)),
+        )
 
 
 async def _forward_live_to_client(
@@ -63,6 +109,8 @@ async def _forward_live_to_client(
 
     try:
         async for message in live_session.receive_messages():
+            await _forward_transcriptions(websocket, message)
+
             if message.tool_call:
                 asyncio.create_task(
                     _run_handoff(message.tool_call),
@@ -88,26 +136,39 @@ async def _forward_live_to_client(
                 await websocket.send_json(
                     {
                         "type": "control",
-                        "action": "error",
+                        "action": "live_error",
                         "message": (
                             "Voice connection to Gemini dropped. "
-                            "Click End, then Start voice to reconnect."
+                            "Toggle the mic off and on to reconnect."
                         ),
                     }
                 )
 
 
-async def handle_stream(websocket: WebSocket, session_id: str) -> None:
+async def _start_live_session(
+    *,
+    session_id: str,
+    websocket: WebSocket,
+    pool_session: dict,
+) -> tuple[GeminiLiveSession | None, asyncio.Task | None, asyncio.Task | None]:
+    """Lazily connect Gemini Live and start the forward loop."""
+
+    existing = pool_session.get("live_session")
+    if existing and existing.is_connected:
+        with suppress(Exception):
+            await websocket.send_json({"type": "control", "action": "live_ready"})
+        return existing, pool_session.get("forward_task"), pool_session.get("watch_task")
+
     if not settings.gemini_api_key:
-        await websocket.close(code=1011, reason="GEMINI_API_KEY is required")
-        return
-
-    await websocket.accept()
-
-    pool_session = get_or_create_session(session_id)
-
-    pool_session["websocket"] = websocket
-    pool_session["audio_frozen"] = False
+        with suppress(Exception):
+            await websocket.send_json(
+                {
+                    "type": "control",
+                    "action": "live_error",
+                    "message": "Voice requires GEMINI_API_KEY in backend/.env.",
+                }
+            )
+        return None, None, None
 
     live_session = GeminiLiveSession()
     pool_session["live_session"] = live_session
@@ -115,25 +176,25 @@ async def handle_stream(websocket: WebSocket, session_id: str) -> None:
     try:
         await live_session.connect()
     except Exception as exc:
-        logger.exception("Failed to connect Gemini Live session")
+        logger.exception("Failed to connect Gemini Live session for %s", session_id)
+        pool_session["live_session"] = None
         user_message = (
             str(exc)
             if "GEMINI_API_KEY" in str(exc) or "timed out" in str(exc).lower()
             else (
                 "Voice service unavailable. Check GEMINI_API_KEY in backend/.env "
-                "and your network connection, then click Start voice again."
+                "and your network connection, then try enabling the mic again."
             )
         )
         with suppress(Exception):
             await websocket.send_json(
                 {
                     "type": "control",
-                    "action": "error",
+                    "action": "live_error",
                     "message": user_message,
                 }
             )
-        await websocket.close(code=1011, reason="Gemini Live connection failed")
-        return
+        return None, None, None
 
     forward_task = asyncio.create_task(
         _forward_live_to_client(
@@ -151,19 +212,105 @@ async def handle_stream(websocket: WebSocket, session_id: str) -> None:
             pass
         except Exception:
             logger.exception("Forward task crashed for session %s", session_id)
-            with suppress(Exception):
-                await websocket.send_json(
-                    {
-                        "type": "ui",
-                        "action": "show_products",
-                        "payload": {
-                            "products": [],
-                            "error": "Voice session interrupted. Please reconnect.",
-                        },
-                    }
-                )
 
     watch_task = asyncio.create_task(_watch_forward())
+    pool_session["forward_task"] = forward_task
+    pool_session["watch_task"] = watch_task
+
+    with suppress(Exception):
+        await websocket.send_json({"type": "control", "action": "live_ready"})
+    return live_session, forward_task, watch_task
+
+
+async def _stop_live_session(pool_session: dict) -> None:
+    forward_task = pool_session.pop("forward_task", None)
+    watch_task = pool_session.pop("watch_task", None)
+    live_session: GeminiLiveSession | None = pool_session.get("live_session")
+
+    if forward_task:
+        forward_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await forward_task
+    if watch_task:
+        watch_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await watch_task
+    if live_session:
+        await live_session.close()
+    pool_session["live_session"] = None
+    pool_session["audio_frozen"] = False
+
+
+async def _handle_select_product(
+    *,
+    session_id: str,
+    websocket: WebSocket,
+    pool_session: dict,
+    product_id: str,
+) -> None:
+    agent_state = dict(pool_session.get("agent_state") or {})
+    ui_action = dict(agent_state.get("ui_action") or {})
+    payload = dict(ui_action.get("payload") or {})
+    products = payload.get("products") or []
+    selected = next((p for p in products if p.get("id") == product_id), None)
+    if not selected:
+        return
+
+    if pool_session.get("handoff_running"):
+        logger.info("Product tap ignored during handoff for session %s", session_id)
+        return
+
+    payload["selected_product"] = selected
+    ui_action["payload"] = payload
+    agent_state["ui_action"] = ui_action
+    update_agent_state(session_id, agent_state)
+
+    intent = f"Add {selected.get('name', 'this item')} to cart"
+    try:
+        await run_text_intent(
+            session_id=session_id,
+            websocket=websocket,
+            intent_text=intent,
+            voice_mode=True,
+            pool_session=pool_session,
+        )
+        logger.info(
+            "Added selected product to cart for session %s: %s",
+            session_id,
+            selected.get("name"),
+        )
+    except TextIntentBusyError:
+        await emit_assistant_text(
+            websocket,
+            "Still working on your last request — please wait a moment.",
+        )
+    except Exception:
+        logger.exception("Failed to add selected product for session %s", session_id)
+        with suppress(Exception):
+            await websocket.send_json(
+                {
+                    "type": "control",
+                    "action": "error",
+                    "message": (
+                        "Could not add that item right now. "
+                        "Please try tapping again or tell Kapru the product name."
+                    ),
+                }
+            )
+
+
+async def handle_stream(websocket: WebSocket, session_id: str) -> None:
+    await websocket.accept()
+
+    pool_session = get_or_create_session(session_id)
+    pool_session["websocket"] = websocket
+    pool_session["audio_frozen"] = False
+    pool_session["live_session"] = None
+    pool_session["forward_task"] = None
+    pool_session["watch_task"] = None
+
+    with suppress(Exception):
+        await websocket.send_json({"type": "control", "action": "session_ready"})
 
     try:
         while True:
@@ -177,81 +324,65 @@ async def handle_stream(websocket: WebSocket, session_id: str) -> None:
                     ctrl = json.loads(text)
                 except json.JSONDecodeError:
                     continue
+
                 ctrl_type = ctrl.get("type")
+
+                if ctrl_type == "text_message":
+                    user_text = (ctrl.get("text") or "").strip()
+                    if not user_text:
+                        continue
+                    if pool_session.get("handoff_running"):
+                        await emit_assistant_text(
+                            websocket,
+                            "Still working on your last request — please wait a moment.",
+                        )
+                        continue
+                    try:
+                        await run_text_intent(
+                            session_id=session_id,
+                            websocket=websocket,
+                            intent_text=user_text,
+                            voice_mode=False,
+                            pool_session=pool_session,
+                        )
+                    except TextIntentBusyError:
+                        await emit_assistant_text(
+                            websocket,
+                            "Still working on your last request — please wait a moment.",
+                        )
+                    continue
+
+                if ctrl_type == "voice_start":
+                    await _start_live_session(
+                        session_id=session_id,
+                        websocket=websocket,
+                        pool_session=pool_session,
+                    )
+                    continue
+
+                if ctrl_type == "voice_stop":
+                    await _stop_live_session(pool_session)
+                    with suppress(Exception):
+                        await websocket.send_json({"type": "control", "action": "session_ready"})
+                    continue
+
                 if ctrl_type == "select_product":
                     product_id = ctrl.get("product_id")
                     if product_id:
-                        agent_state = dict(pool_session.get("agent_state") or {})
-                        ui_action = dict(agent_state.get("ui_action") or {})
-                        payload = dict(ui_action.get("payload") or {})
-                        products = payload.get("products") or []
-                        selected = next(
-                            (p for p in products if p.get("id") == product_id),
-                            None,
+                        await _handle_select_product(
+                            session_id=session_id,
+                            websocket=websocket,
+                            pool_session=pool_session,
+                            product_id=product_id,
                         )
-                        if selected:
-                            if pool_session.get("handoff_running"):
-                                logger.info(
-                                    "Product tap ignored during handoff for session %s",
-                                    session_id,
-                                )
-                                continue
-                            payload["selected_product"] = selected
-                            ui_action["payload"] = payload
-                            agent_state["ui_action"] = ui_action
-                            intent = f"Add {selected.get('name', 'this item')} to cart"
-                            prior_messages = list(agent_state.get("messages") or [])
-                            try:
-                                async with pool_session["graph_lock"]:
-                                    result = await get_graph().ainvoke(
-                                        {
-                                            **agent_state,
-                                            "messages": prior_messages
-                                            + [HumanMessage(content=intent)],
-                                            "voice_mode": True,
-                                        },
-                                        config={
-                                            "configurable": {
-                                                "thread_id": pool_session["langgraph_thread_id"]
-                                            },
-                                            "recursion_limit": 12,
-                                        },
-                                    )
-                                update_agent_state(session_id, result)
-                                ui_action = result.get("ui_action") or {}
-                                action = ui_action.get("action") or "update_cart"
-                                await websocket.send_json(
-                                    {
-                                        "type": "ui",
-                                        "action": action,
-                                        "payload": enrich_ui_payload(result),
-                                    }
-                                )
-                                logger.info(
-                                    "Added selected product to cart for session %s: %s",
-                                    session_id,
-                                    selected.get("name"),
-                                )
-                            except Exception as exc:
-                                logger.exception(
-                                    "Failed to add selected product for session %s",
-                                    session_id,
-                                )
-                                with suppress(Exception):
-                                    await websocket.send_json(
-                                        {
-                                            "type": "control",
-                                            "action": "error",
-                                            "message": (
-                                                "Could not add that item right now. "
-                                                "Please try tapping again or tell Kapru the product name."
-                                            ),
-                                        }
-                                    )
                 continue
 
             pcm_chunk = message.get("bytes")
             if pcm_chunk is None:
+                continue
+
+            live_session: GeminiLiveSession | None = pool_session.get("live_session")
+            if not live_session or not live_session.is_connected:
                 continue
 
             if pool_session.get("audio_frozen"):
@@ -261,13 +392,5 @@ async def handle_stream(websocket: WebSocket, session_id: str) -> None:
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected: %s", session_id)
     finally:
-        forward_task.cancel()
-        watch_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await forward_task
-        with suppress(asyncio.CancelledError):
-            await watch_task
-        await live_session.close()
-        pool_session["live_session"] = None
+        await _stop_live_session(pool_session)
         pool_session["websocket"] = None
-        pool_session["audio_frozen"] = False

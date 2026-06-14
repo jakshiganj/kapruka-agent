@@ -4,9 +4,10 @@ interface VoiceIndicatorProps {
   phase: VoicePhase;
   level: number;
   connected: boolean;
+  micEnabled: boolean;
 }
 
-export function VoiceIndicator({ phase, level, connected }: VoiceIndicatorProps) {
+export function VoiceIndicator({ phase, level, connected, micEnabled }: VoiceIndicatorProps) {
   const pulseScale = phase === "processing" ? 1.1 : 1 + Math.min(level * 8, 0.6);
   const label =
     phase === "speaking"
@@ -15,9 +16,11 @@ export function VoiceIndicator({ phase, level, connected }: VoiceIndicatorProps)
         ? "Searching Kapruka"
         : phase === "listening"
           ? "Listening"
-          : connected
+          : connected && micEnabled
             ? "Ready"
-            : "Offline";
+            : connected
+              ? "Chat mode"
+              : "Offline";
 
   const ringColor =
     phase === "speaking"
@@ -26,14 +29,18 @@ export function VoiceIndicator({ phase, level, connected }: VoiceIndicatorProps)
         ? "bg-amber-400/80"
         : phase === "listening"
           ? "bg-sky-400/80"
-          : "bg-slate-500/60";
+          : connected && micEnabled
+            ? "bg-slate-500/60"
+            : "bg-slate-600/40";
 
   const subtitle =
     phase === "processing"
       ? "Finding gifts and checking delivery across Sri Lanka…"
-      : connected
+      : connected && micEnabled
         ? "Speak in English, Sinhala, Tamil, or Tanglish — machan, cake ekak, flowers, hampers…"
-        : "Connect to meet Kapru, your Kapruka gift assistant.";
+        : connected
+          ? "Type below or tap Enable mic to speak with Kapru."
+          : "Connect to meet Kapru, your Kapruka gift assistant.";
 
   return (
     <div className="flex flex-col items-center gap-4">
