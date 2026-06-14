@@ -36,9 +36,43 @@ ADD_PRODUCT_PATTERN = re.compile(
 
 NEW_SEARCH_PATTERN = re.compile(
     r"(?:also add|add another|add|search(?:\s+for)?|find|get|show)\s+"
-    r"(?:a|an|some|me)?\s*(.+?)(?:\s+to cart|\s+as well|\s+please|$)",
+    r"(?:(?:an|some|me)\s+|\ba\s+)?"
+    r"(.+?)(?:\s+to cart|\s+as well|\s+please|$)",
     re.IGNORECASE,
 )
+
+CATEGORY_BROWSE_PATTERN = re.compile(
+    r"(?i)\b("
+    r"show\s+(?:me\s+)?(?:all\s+)?(?:the\s+)?(?:product\s+|gift\s+)?categor(?:y|ies)\b|"
+    r"browse\s+(?:all\s+)?(?:the\s+)?(?:product\s+|gift\s+)?categor(?:y|ies)\b|"
+    r"(?:what|which)\s+(?:are\s+)?(?:all\s+)?(?:the\s+)?(?:product\s+|gift\s+)?categor(?:y|ies)\b|"
+    r"(?:what|which)\s+categor(?:y|ies)(?:\s+do\s+you\s+have)?|"
+    r"what\s+can\s+i\s+buy|"
+    r"gift\s+categor(?:y|ies)\b|"
+    r"browse\s+kapruka|"
+    r"see\s+(?:all\s+)?(?:the\s+)?(?:product\s+|gift\s+)?categor(?:y|ies)\b|"
+    r"(?:list|view)\s+(?:all\s+)?(?:the\s+)?(?:product\s+|gift\s+)?categor(?:y|ies)\b|"
+    r"all\s+(?:product\s+|gift\s+)?categor(?:y|ies)\b|"
+    r"(?:product|gift)\s+categor(?:y|ies)\b|"
+    r"categor(?:y|ies)\s+(?:available|to\s+browse|for\s+(?:sending\s+)?gifts?)\b|"
+    r"category\s+(?:list|menu|picker)"
+    r")\b",
+)
+
+
+def is_category_browse_intent(user_text: str) -> bool:
+    text = user_text.strip()
+    if not text:
+        return False
+    if CATEGORY_BROWSE_PATTERN.search(text):
+        return True
+    # "show/what/list ... [optional words] ... categories" (natural long phrasing)
+    return bool(
+        re.search(
+            r"(?i)\b(?:show|browse|list|view|see|what|which)\b(?:\s+\w+){0,10}\s+categor(?:y|ies)\b",
+            text,
+        )
+    )
 
 
 def wants_add_product(user_text: str) -> bool:
@@ -60,6 +94,8 @@ def is_delivery_followup(user_text: str, *, cart: list[Any] | None = None) -> bo
 
 
 def extract_followup_search_query(user_text: str) -> str | None:
+    if is_category_browse_intent(user_text):
+        return None
     if re.search(
         r"(?i)\b(first|second|third|fourth|fifth|that one|this one|from the list|from the screen)\b",
         user_text,
@@ -74,6 +110,8 @@ def extract_followup_search_query(user_text: str) -> str | None:
         "",
         query,
     ).strip()
+    if re.search(r"(?i)\bcategor(?:y|ies)\b", query):
+        return None
     if len(query) >= 2 and not re.search(r"(?i)^(it|that|this|one|the)$", query):
         return query
     return None
@@ -104,6 +142,8 @@ BROWSE_SEARCH_PATTERN = re.compile(
 
 def extract_browse_search_query(user_text: str) -> str | None:
     """Extract a Kapruka catalog query from natural browse phrases."""
+    if is_category_browse_intent(user_text):
+        return None
     text = user_text.strip().rstrip(".!?")
     text = re.sub(
         r"(?i)\s+to\s+.+?\s+on\s+20\d{2}-\d{2}-\d{2}\b",
@@ -151,6 +191,8 @@ def resolve_search_query(
     cart: list[Any] | None = None,
 ) -> str | None:
     """Best-effort Kapruka catalog query from the latest user utterance."""
+    if is_category_browse_intent(user_text):
+        return None
     if is_delivery_followup(user_text, cart=cart):
         return None
     for extractor in (extract_browse_search_query, extract_followup_search_query):

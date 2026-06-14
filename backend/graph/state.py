@@ -4,12 +4,19 @@ from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
 
+OrderPhase = Literal["shopping", "link_ready", "branch_pending"]
+
+
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     cart: List[Dict[str, Any]]
     delivery_info: Dict[str, str]
     checkout_info: Dict[str, Any]
     checkout_result: NotRequired[Dict[str, Any]]
+    checkout_cart_snapshot: NotRequired[List[Dict[str, Any]]]
+    order_phase: NotRequired[OrderPhase]
+    post_link_trigger_text: NotRequired[str]
+    post_link_pending_query: NotRequired[str]
     ui_action: Dict[str, Any]
     voice_prompt: str
     next_node: str

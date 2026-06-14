@@ -10,6 +10,7 @@ from graph.llm import get_llm
 from graph.product_pick import (
     extract_browse_search_query,
     extract_followup_search_query,
+    is_category_browse_intent,
     is_delivery_followup,
     normalize_search_query,
     pick_product_from_text,
@@ -20,6 +21,14 @@ from graph.product_pick import (
     wants_add_product,
     _is_browse_search_intent,
 )
+from graph.order_lifecycle import (
+    branch_prompt,
+    checkout_link_ready,
+    invalidate_checkout,
+    parse_branch_choice,
+    reset_order_session,
+)
+from graph.categories_api import get_categories
 from graph.state import AgentState, RouterDecision
 
 logger = logging.getLogger(__name__)
@@ -66,6 +75,31 @@ def _wants_more_products(user_text: str) -> bool:
 
 def _wants_checkout(user_text: str) -> bool:
     return bool(CHECKOUT_INTENT_PATTERN.search(user_text) or PAY_INTENT_PATTERN.search(user_text))
+
+
+def _wants_category_browse(user_text: str) -> bool:
+    return is_category_browse_intent(user_text)
+
+
+def _categories_browse_response() -> dict[str, Any]:
+    try:
+        data = get_categories(depth=2, featured_only=True)
+        categories = data.get("categories") or []
+    except Exception:
+        logger.exception("Failed to load categories for browse UI")
+        categories = []
+    return {
+        "next_node": "end",
+        "ui_action": {
+            "action": "show_categories",
+            "payload": {"categories": categories},
+        },
+        "voice_prompt": (
+            "Here are Kapruka gift categories — tap a category to see what's in stock."
+            if categories
+            else "I couldn't load categories right now. Tell me what gift you'd like to find."
+        ),
+    }
 
 
 def _mentions_checkout_details(user_text: str) -> bool:
@@ -136,6 +170,114 @@ def _has_checkout_details(checkout_info: dict[str, Any]) -> bool:
         and address
         and not _is_placeholder_address(address)
     )
+
+
+def _checkout_link_ready(state: AgentState) -> bool:
+    return checkout_link_ready(state)
+
+
+def _is_post_link_shopping_intent(
+    state: AgentState,
+    user_text: str,
+    *,
+    pending_query: str | None,
+    shown_query: str,
+    products: list[dict[str, Any]],
+    cart: list[dict[str, Any]],
+    payload: dict[str, Any],
+) -> bool:
+    """True when the user would add/search after a payment link already exists."""
+    if not _checkout_link_ready(state):
+        return False
+    if _wants_checkout(user_text) or _mentions_checkout_details(user_text):
+        return False
+    if (
+        pending_query
+        and normalize_search_query(pending_query) != shown_query
+        and not is_delivery_followup(user_text, cart=cart or None)
+    ):
+        return True
+    if cart and (wants_add_product(user_text) or _wants_more_products(user_text)):
+        return True
+    picked = pick_product_from_text(user_text, products)
+    if picked and should_add_to_cart(user_text, products, selected_product=picked):
+        picked_id = picked.get("id") or picked.get("product_id")
+        if not any(item["product_id"] == picked_id for item in cart):
+            return True
+    return False
+
+
+def _branch_pending_response(
+    *,
+    cart: list[dict[str, Any]],
+    delivery_info: dict[str, str],
+    checkout_info: dict[str, Any],
+    payload: dict[str, Any],
+    user_text: str,
+    pending_query: str | None,
+    shown_query: str,
+) -> dict[str, Any]:
+    stored_query = ""
+    if pending_query and normalize_search_query(pending_query) != shown_query:
+        stored_query = pending_query
+    return {
+        "next_node": "end",
+        "order_phase": "branch_pending",
+        "post_link_trigger_text": user_text,
+        "post_link_pending_query": stored_query,
+        "voice_prompt": branch_prompt(),
+        "ui_action": {
+            "action": "update_cart",
+            "payload": {
+                **payload,
+                "cart": cart,
+                "delivery_info": delivery_info,
+                "order_phase": "branch_pending",
+            },
+        },
+        "delivery_info": delivery_info,
+        "checkout_info": checkout_info,
+    }
+
+
+def _handle_new_gift_branch(
+    *,
+    pending_query: str | None,
+    search_query: str | None,
+) -> dict[str, Any]:
+    query = (pending_query or search_query or "").strip()
+    updates = reset_order_session()
+    updates["voice_prompt"] = (
+        f"Starting a new gift — searching for {query}."
+        if query
+        else "Starting a new gift. What would you like to browse?"
+    )
+    updates["post_link_trigger_text"] = ""
+    updates["post_link_pending_query"] = ""
+    if query:
+        updates["next_node"] = "discovery"
+        updates["ui_action"] = {
+            "action": "show_products",
+            "payload": {"search_query": query},
+        }
+    else:
+        updates["next_node"] = "end"
+    return updates
+
+
+def _should_route_to_checkout(
+    state: AgentState,
+    user_text: str,
+    checkout_info: dict[str, Any],
+) -> bool:
+    """Only create or re-open checkout when the user asks — not on every follow-up."""
+    if not _has_checkout_details(checkout_info):
+        return False
+    if _wants_checkout(user_text):
+        return True
+    if _mentions_checkout_details(user_text) and not _checkout_link_ready(state):
+        return True
+    return False
 
 
 def _extract_checkout_from_text(user_text: str, checkout_info: dict[str, Any]) -> dict[str, Any]:
@@ -266,7 +408,7 @@ def _deterministic_next(state: AgentState, user_text: str) -> str | None:
     elif cart and not (delivery_info.get("city") and delivery_info.get("date")):
         return "end"
     if cart and delivery_info.get("validated") == "true":
-        if _has_checkout_details(checkout_info):
+        if _should_route_to_checkout(state, user_text, checkout_info):
             return "checkout"
         return "end"
     return None
@@ -355,7 +497,7 @@ def _apply_router_decision(
     validated = delivery_info.get("validated") == "true"
     next_node = decision.next_node
 
-    if cart and validated and _has_checkout_details(checkout_info):
+    if cart and validated and _should_route_to_checkout(state, _latest_user_text(state), checkout_info):
         next_node = "checkout"
     elif cart and validated and (decision.wants_checkout or _wants_checkout(_latest_user_text(state))):
         next_node = "end"
@@ -421,6 +563,9 @@ def _llm_route(state: AgentState, user_text: str) -> RouterDecision:
 
 def router_node(state: AgentState) -> dict[str, Any]:
     user_text = _latest_user_text(state)
+    if _wants_category_browse(user_text):
+        return _categories_browse_response()
+
     delivery_info = dict(state.get("delivery_info") or {})
     extracted = _extract_delivery_from_text(user_text)
     if extracted.get("city") and extracted.get("city") != delivery_info.get("city"):
@@ -462,6 +607,76 @@ def router_node(state: AgentState) -> dict[str, Any]:
         cart=cart or None,
     )
 
+    order_phase = state.get("order_phase") or "shopping"
+    checkout_branch_updates: dict[str, Any] = {}
+
+    if order_phase == "branch_pending":
+        branch = parse_branch_choice(user_text)
+        if branch is None:
+            return _branch_pending_response(
+                cart=cart,
+                delivery_info=delivery_info,
+                checkout_info=checkout_info,
+                payload=payload,
+                user_text=user_text,
+                pending_query=pending_query,
+                shown_query=shown_query,
+            )
+        stored_query = str(state.get("post_link_pending_query") or "").strip()
+        trigger_text = str(state.get("post_link_trigger_text") or user_text)
+        if branch == "new_gift":
+            return _handle_new_gift_branch(
+                pending_query=stored_query or pending_query,
+                search_query=search_query,
+            )
+        checkout_branch_updates = {
+            **invalidate_checkout(state),
+            "order_phase": "shopping",
+            "post_link_trigger_text": "",
+            "post_link_pending_query": "",
+        }
+        merged_state = {**merged_state, **checkout_branch_updates}
+        cart = merged_state.get("cart") or []
+        if stored_query:
+            pending_query = stored_query
+            payload["search_query"] = stored_query
+            payload.pop("selected_product", None)
+            payload.pop("products", None)
+            ui_action["payload"] = payload
+            ui_action["action"] = "show_products"
+            shown_query = normalize_search_query("")
+        else:
+            pending_query = resolve_search_query(
+                trigger_text,
+                products=products,
+                selected_product=selected,
+                cart=cart or None,
+            )
+            user_text = trigger_text
+    elif _is_post_link_shopping_intent(
+        merged_state,
+        user_text,
+        pending_query=pending_query,
+        shown_query=shown_query,
+        products=products,
+        cart=cart,
+        payload=payload,
+    ):
+        return _branch_pending_response(
+            cart=cart,
+            delivery_info=delivery_info,
+            checkout_info=checkout_info,
+            payload=payload,
+            user_text=user_text,
+            pending_query=pending_query,
+            shown_query=shown_query,
+        )
+
+    def _with_branch_updates(result: dict[str, Any]) -> dict[str, Any]:
+        if not checkout_branch_updates:
+            return result
+        return {**result, **checkout_branch_updates}
+
     # Delivery validation — before new product search when cart has city/date.
     if (
         cart
@@ -471,12 +686,12 @@ def router_node(state: AgentState) -> dict[str, Any]:
         and not _wants_checkout(user_text)
     ):
         logger.info("Router delivery follow-up -> validation for %s", delivery_info.get("city"))
-        return {
+        return _with_branch_updates({
             "next_node": "validation",
             "delivery_info": delivery_info,
             "checkout_info": checkout_info,
             "ui_action": ui_action,
-        }
+        })
 
     # New catalog search while the cart already has items (e.g. "I want flowers").
     if (
@@ -492,12 +707,12 @@ def router_node(state: AgentState) -> dict[str, Any]:
         ui_action["payload"] = payload
         ui_action["action"] = "show_products"
         logger.info("Router new search with cart -> discovery (%s)", pending_query)
-        return {
+        return _with_branch_updates({
             "next_node": "discovery",
             "delivery_info": delivery_info,
             "checkout_info": checkout_info,
             "ui_action": ui_action,
-        }
+        })
 
     # Add another item — pick from on-screen carousel or run a new search.
     if cart and not _wants_checkout(user_text) and not _mentions_checkout_details(user_text):
@@ -513,12 +728,12 @@ def router_node(state: AgentState) -> dict[str, Any]:
                 payload["selected_product"] = picked
                 ui_action["payload"] = payload
                 logger.info("Router add from carousel -> %s", picked.get("name"))
-                return {
+                return _with_branch_updates({
                     "next_node": "cart_manager",
                     "delivery_info": delivery_info,
                     "checkout_info": checkout_info,
                     "ui_action": ui_action,
-                }
+                })
 
         if wants_add_product(user_text) or _wants_more_products(user_text):
             followup = resolve_search_query(
@@ -547,13 +762,13 @@ def router_node(state: AgentState) -> dict[str, Any]:
                 }
 
     # Fast path: regex already has everything — skip LLM and create the payment link.
-    if cart and validated and _has_checkout_details(checkout_info):
+    if cart and validated and _should_route_to_checkout(merged_state, user_text, checkout_info):
         logger.info("Router routing to checkout (regex details): %s", checkout_info)
-        return {
+        return _with_branch_updates({
             "next_node": "checkout",
             "delivery_info": delivery_info,
             "checkout_info": checkout_info,
-        }
+        })
 
     # Checkout turn: user asked to pay or is providing recipient/sender details.
     if cart and validated and (_wants_checkout(user_text) or _mentions_checkout_details(user_text)):
@@ -570,7 +785,7 @@ def router_node(state: AgentState) -> dict[str, Any]:
             updates.get("next_node"),
             updates.get("checkout_info"),
         )
-        return updates
+        return _with_branch_updates(updates)
 
     deterministic = _deterministic_next(merged_state, user_text)
     if deterministic:
@@ -607,7 +822,7 @@ def router_node(state: AgentState) -> dict[str, Any]:
                 updates["voice_prompt"] = state["voice_prompt"]
         elif deterministic == "checkout":
             logger.info("Router routing to checkout with details: %s", checkout_info)
-        return updates
+        return _with_branch_updates(updates)
 
     if state.get("voice_mode"):
         cart = merged_state.get("cart") or []
@@ -644,7 +859,7 @@ def router_node(state: AgentState) -> dict[str, Any]:
                 "ui_action": ui_action,
             }
         if cart or payload.get("products"):
-            return {
+            return _with_branch_updates({
                 "next_node": "end",
                 "delivery_info": delivery_info,
                 "checkout_info": checkout_info,
@@ -652,19 +867,19 @@ def router_node(state: AgentState) -> dict[str, Any]:
                     "Tell me the delivery city and date, or say checkout with recipient details "
                     "when you're ready."
                 ),
-            }
-        return {
+            })
+        return _with_branch_updates({
             "next_node": "discovery",
             "delivery_info": delivery_info,
             "checkout_info": checkout_info,
             **({"ui_action": ui_action} if search_query else {}),
-        }
+        })
 
     decision = _llm_route(merged_state, user_text)
-    return _apply_router_decision(
+    return _with_branch_updates(_apply_router_decision(
         decision=decision,
         state=merged_state,
         delivery_info=delivery_info,
         ui_action=ui_action,
         checkout_info=checkout_info,
-    )
+    ))

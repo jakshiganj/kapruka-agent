@@ -1,23 +1,54 @@
-import type { CartItem, DeliveryInfo } from "../types";
+import type { CartItem, CheckoutCartSnapshot, DeliveryInfo } from "../types";
 
 interface CartDrawerProps {
   open: boolean;
   cart: CartItem[];
   delivery?: DeliveryInfo;
+  checkoutStale?: boolean;
+  checkoutSnapshot?: CheckoutCartSnapshot;
   onClose: () => void;
+  onRequestNewLink?: () => void;
 }
 
 function lineTotal(item: CartItem): number {
   return item.price * item.quantity;
 }
 
-export function CartDrawer({ open, cart, delivery, onClose }: CartDrawerProps) {
+function cartDiffersFromSnapshot(
+  cart: CartItem[],
+  snapshot?: CheckoutCartSnapshot,
+): boolean {
+  if (!snapshot?.lines?.length) {
+    return false;
+  }
+  const live = cart
+    .map((item) => `${item.product_id}:${item.quantity}`)
+    .sort()
+    .join("|");
+  const frozen = snapshot.lines
+    .map((line) => `${line.product_id}:${line.quantity}`)
+    .sort()
+    .join("|");
+  return live !== frozen;
+}
+
+export function CartDrawer({
+  open,
+  cart,
+  delivery,
+  checkoutStale = false,
+  checkoutSnapshot,
+  onClose,
+  onRequestNewLink,
+}: CartDrawerProps) {
   const subtotal = cart.reduce((sum, item) => sum + lineTotal(item), 0);
   const deliveryFee =
     delivery?.validated === "true" && delivery.delivery_rate
       ? Number(delivery.delivery_rate)
       : 0;
   const total = subtotal + (Number.isFinite(deliveryFee) ? deliveryFee : 0);
+  const showStaleWarning =
+    checkoutStale || cartDiffersFromSnapshot(cart, checkoutSnapshot);
 
   return (
     <>
@@ -78,6 +109,20 @@ export function CartDrawer({ open, cart, delivery, onClose }: CartDrawerProps) {
         </div>
 
         <footer className="space-y-2 border-t border-white/10 px-5 py-4">
+          {showStaleWarning ? (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+              Cart changed since your last payment link. Say checkout for a fresh link.
+              {onRequestNewLink ? (
+                <button
+                  type="button"
+                  onClick={onRequestNewLink}
+                  className="mt-2 block font-semibold text-amber-100 underline underline-offset-2"
+                >
+                  Get new payment link
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           <div className="flex justify-between text-sm text-slate-400">
             <span>Items</span>
             <span>LKR {subtotal.toLocaleString()}</span>

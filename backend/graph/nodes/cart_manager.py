@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from graph.order_lifecycle import checkout_link_ready, invalidate_checkout
 from graph.state import AgentState
 from graph.product_pick import pick_product_from_text
 from kapruka_mcp.kapruka_tools import extract_price_amount, is_perishable_product
@@ -45,6 +46,7 @@ def cart_manager_node(state: AgentState) -> dict[str, Any]:
 
     cart = list(state.get("cart") or [])
     delivery_info = dict(state.get("delivery_info") or {})
+    had_checkout_link = checkout_link_ready(state)
     existing = next((item for item in cart if item["product_id"] == product_id), None)
     if existing:
         existing["quantity"] = existing.get("quantity", 1) + 1
@@ -62,7 +64,7 @@ def cart_manager_node(state: AgentState) -> dict[str, Any]:
     if delivery_info.get("validated") == "true":
         delivery_info.pop("validated", None)
 
-    return {
+    result: dict[str, Any] = {
         "cart": cart,
         "delivery_info": delivery_info,
         "ui_action": {
@@ -72,12 +74,35 @@ def cart_manager_node(state: AgentState) -> dict[str, Any]:
                 "cart": cart,
             },
         },
-        "voice_prompt": _after_add_prompt(selected.get("name", "item"), delivery_info),
+        "voice_prompt": _after_add_prompt(
+            selected.get("name", "item"),
+            delivery_info,
+            had_checkout_link=had_checkout_link,
+        ),
         "next_node": "validation" if delivery_info.get("city") and delivery_info.get("date") else "end",
     }
+    if had_checkout_link:
+        result.update(invalidate_checkout(state))
+    return result
 
 
-def _after_add_prompt(name: str, delivery_info: dict[str, Any]) -> str:
+def _after_add_prompt(
+    name: str,
+    delivery_info: dict[str, Any],
+    *,
+    had_checkout_link: bool = False,
+) -> str:
+    if had_checkout_link:
+        if delivery_info.get("city") and delivery_info.get("date"):
+            return (
+                f"Added {name}. Your previous payment link was for the old cart — "
+                f"I'll re-check delivery to {delivery_info['city']}, then say checkout "
+                "when you're ready for a fresh payment link."
+            )
+        return (
+            f"Added {name}. Your previous payment link was for the old cart — "
+            "say checkout when you're ready and I'll generate a fresh payment link."
+        )
     if delivery_info.get("city") and delivery_info.get("date"):
         return f"Added {name} to your cart. I'll check delivery to {delivery_info['city']} next."
     return (

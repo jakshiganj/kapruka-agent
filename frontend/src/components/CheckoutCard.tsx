@@ -3,6 +3,8 @@ import type { CheckoutInfo, CheckoutPayload } from "../types";
 interface CheckoutCardProps {
   payload: CheckoutPayload;
   inline?: boolean;
+  stale?: boolean;
+  onRequestNewLink?: () => void;
 }
 
 function formatExpiry(iso: string): string {
@@ -16,9 +18,15 @@ function formatExpiry(iso: string): string {
   }
 }
 
-export function CheckoutCard({ payload, inline = false }: CheckoutCardProps) {
+export function CheckoutCard({
+  payload,
+  inline = false,
+  stale = false,
+  onRequestNewLink,
+}: CheckoutCardProps) {
   const { checkout_url, order_ref, summary, expires_at, checkout_info, cart } = payload;
   const info = checkout_info as CheckoutInfo | undefined;
+  const isStale = stale || payload.checkout_stale === true;
 
   return (
     <section
@@ -34,6 +42,24 @@ export function CheckoutCard({ payload, inline = false }: CheckoutCardProps) {
       </div>
 
       <div className="space-y-3 p-5">
+        {isStale ? (
+          <div className="rounded-xl border border-[#6f5d00]/30 bg-[#fff8e0] px-4 py-3 text-sm text-[#6f5d00]">
+            <p className="font-semibold">Cart changed — this link may be outdated</p>
+            <p className="mt-1 text-xs text-[#494550]">
+              Your cart has been updated since this link was created. Generate a new link before paying.
+            </p>
+            {onRequestNewLink ? (
+              <button
+                type="button"
+                onClick={onRequestNewLink}
+                className="mt-3 rounded-lg bg-[#FBD614] px-4 py-2 text-xs font-semibold text-[#222222] hover:bg-[#fdd818]"
+              >
+                Get new payment link
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
         {cart && cart.length > 0 ? (
           <ul className="space-y-1.5 text-sm text-[#494550]">
             {cart.map((item) => (
@@ -108,9 +134,14 @@ export function CheckoutCard({ payload, inline = false }: CheckoutCardProps) {
             href={checkout_url}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex w-full items-center justify-center rounded-xl bg-[#FBD614] px-4 py-3 text-center text-sm font-semibold text-[#222222] shadow-sm hover:bg-[#fdd818]"
+            className={`inline-flex w-full items-center justify-center rounded-xl px-4 py-3 text-center text-sm font-semibold shadow-sm ${
+              isStale
+                ? "pointer-events-none bg-[#eae7e7] text-[#494550]/60"
+                : "bg-[#FBD614] text-[#222222] hover:bg-[#fdd818]"
+            }`}
+            aria-disabled={isStale}
           >
-            Open secure checkout →
+            {isStale ? "Link outdated — get a new one" : "Open secure checkout →"}
           </a>
         ) : (
           <p className="text-sm text-[#6f5d00]">Checkout link not available yet.</p>

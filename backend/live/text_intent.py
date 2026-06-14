@@ -39,14 +39,15 @@ async def invoke_graph_intent(
     intent_text: str,
     voice_mode: bool,
     pool_session: dict[str, Any],
-) -> tuple[dict[str, Any] | None, str]:
-    """Run LangGraph and persist state. Returns (result, voice_prompt) on success."""
+) -> tuple[dict[str, Any] | None, str, dict[str, Any]]:
+    """Run LangGraph and persist state. Returns (result, voice_prompt, prior_agent_state)."""
 
     intent_text = (intent_text or "").strip()
+    prior_agent_state = dict(pool_session.get("agent_state") or {})
     if not intent_text:
-        return None, "I didn't catch that. Could you repeat what you'd like to order?"
+        return None, "I didn't catch that. Could you repeat what you'd like to order?", prior_agent_state
 
-    agent_state = dict(pool_session.get("agent_state") or {})
+    agent_state = prior_agent_state
     prior_messages = list(agent_state.get("messages") or [])
     invoke_state = {
         **agent_state,
@@ -78,25 +79,25 @@ async def invoke_graph_intent(
         return None, (
             "The Kapruka search took too long to finish. "
             "This is usually a timeout, not your fault — please try once more in a few seconds."
-        )
+        ), prior_agent_state
     except KaprukaMCPError as exc:
         message = str(exc).removeprefix("Error:").strip()
         if "rate limit" in message.lower():
             return None, (
                 "Kapruka's rate limit was hit. "
                 "Please wait about a minute before searching again."
-            )
-        return None, f"Kapruka returned an error: {message}"
+            ), prior_agent_state
+        return None, f"Kapruka returned an error: {message}", prior_agent_state
     except Exception:
         logger.exception("Graph intent failed for session %s", session_id)
         return None, (
             "Sorry, I had trouble reaching Kapruka just now. "
             "Please wait a moment and try again."
-        )
+        ), prior_agent_state
 
     update_agent_state(session_id, result)
     voice_prompt = result.get("voice_prompt") or "Done."
-    return result, voice_prompt
+    return result, voice_prompt, prior_agent_state
 
 
 async def emit_assistant_text(websocket: WebSocket, content: str) -> None:
@@ -106,11 +107,21 @@ async def emit_assistant_text(websocket: WebSocket, content: str) -> None:
         )
 
 
-async def emit_ui_result(websocket: WebSocket, result: dict[str, Any]) -> None:
+async def emit_ui_result(
+    websocket: WebSocket,
+    result: dict[str, Any],
+    *,
+    prior_agent_state: dict[str, Any] | None = None,
+) -> None:
     ui_action = result.get("ui_action") or {}
     action = ui_action.get("action")
     if not action:
         return
+    if action == "show_checkout" and prior_agent_state:
+        prior_url = (prior_agent_state.get("checkout_result") or {}).get("checkout_url")
+        new_url = (result.get("checkout_result") or {}).get("checkout_url")
+        if prior_url and new_url and prior_url == new_url:
+            return
     await websocket.send_json(
         {
             "type": "ui",
@@ -149,7 +160,7 @@ async def run_text_intent(
                     {"type": "text", "role": "user", "content": intent_text}
                 )
 
-        result, voice_prompt = await invoke_graph_intent(
+        result, voice_prompt, prior_agent_state = await invoke_graph_intent(
             session_id=session_id,
             intent_text=intent_text,
             voice_mode=voice_mode,
@@ -159,7 +170,7 @@ async def run_text_intent(
         await emit_assistant_text(websocket, voice_prompt)
 
         if result:
-            await emit_ui_result(websocket, result)
+            await emit_ui_result(websocket, result, prior_agent_state=prior_agent_state)
             logger.info("Text intent complete for session %s: %s", session_id, intent_text[:80])
             return result
 

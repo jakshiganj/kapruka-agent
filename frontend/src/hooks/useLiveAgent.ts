@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { enrichCategories, getCategoryLabel } from "../data/categoryCatalog";
 import type {
   ChatMessage,
   ChatRole,
@@ -6,6 +7,7 @@ import type {
   ConnectionState,
   ControlAction,
   DeliveryInfo,
+  KaprukaCategory,
   Product,
   SessionSnapshot,
   ServerEnvelope,
@@ -34,6 +36,7 @@ function mergeSession(
   const searchChanged =
     payload.search_query != null && payload.search_query !== prev.search_query;
   const isShowProducts = action === "show_products";
+  const isShowCategories = action === "show_categories";
 
   return {
     cart: payload.cart?.length ? payload.cart : prev.cart,
@@ -54,6 +57,12 @@ function mergeSession(
         : payload.products?.length
           ? payload.products
           : prev.products,
+    categories:
+      isShowCategories && payload.categories?.length
+        ? payload.categories
+        : payload.categories?.length
+          ? payload.categories
+          : prev.categories,
     search_query:
       isShowProducts && payload.search_query != null
         ? payload.search_query
@@ -63,6 +72,17 @@ function mergeSession(
       : searchChanged
         ? payload.selected_product
         : payload.selected_product ?? prev.selected_product,
+    order_phase: payload.order_phase ?? prev.order_phase,
+    checkout_stale:
+      action === "show_checkout"
+        ? false
+        : payload.checkout_stale === true
+          ? true
+          : payload.checkout_stale === false
+            ? false
+            : prev.checkout_stale,
+    checkout_cart_snapshot: payload.checkout_cart_snapshot ?? prev.checkout_cart_snapshot,
+    checkout_url: (payload as CheckoutPayload).checkout_url ?? prev.checkout_url,
   };
 }
 
@@ -71,7 +91,18 @@ const EMPTY_SESSION: SessionSnapshot = {
   delivery_info: {},
   checkout_info: {},
   products: [],
+  categories: [],
 };
+
+async function fetchCategories(): Promise<KaprukaCategory[]> {
+  const response = await fetch("/api/categories?depth=2&featured=true");
+  if (!response.ok) {
+    throw new Error(`Categories request failed (${response.status})`);
+  }
+  const data = (await response.json()) as { categories?: KaprukaCategory[] };
+  const raw = data.categories ?? [];
+  return enrichCategories(raw);
+}
 
 function createMessageId(): string {
   return crypto.randomUUID();
@@ -200,6 +231,22 @@ function findLastDeliveryMessage(messages: ChatMessage[]): ChatMessage | undefin
   return undefined;
 }
 
+function checkoutFingerprint(payload: CheckoutPayload | undefined): string {
+  if (!payload?.checkout_url) {
+    return "";
+  }
+  return [payload.checkout_url, payload.order_ref ?? ""].join("|");
+}
+
+function findLastCheckoutMessage(messages: ChatMessage[]): ChatMessage | undefined {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]?.kind === "checkout") {
+      return messages[i];
+    }
+  }
+  return undefined;
+}
+
 function buildRichMessages(
   action: string,
   payload: UiPayload,
@@ -207,6 +254,7 @@ function buildRichMessages(
   prevMessages: ChatMessage[],
   sessionProducts: Product[] = [],
   sessionSearchQuery?: string,
+  sessionCategories: KaprukaCategory[] = [],
 ): ChatMessage[] {
   const messages: ChatMessage[] = [];
   const payloadProducts = payload.products ?? [];
@@ -237,9 +285,26 @@ function buildRichMessages(
     });
   }
 
+  if (action === "show_categories") {
+    const categories = payload.categories?.length
+      ? payload.categories
+      : sessionCategories;
+    if (categories.length > 0) {
+      messages.push({
+        id: createMessageId(),
+        role: "assistant",
+        kind: "categories",
+        categories: [...categories],
+      });
+    }
+  }
+
   if (action === "show_checkout") {
     const checkout = payload as CheckoutPayload;
-    if (checkout.checkout_url) {
+    const lastCheckout = findLastCheckoutMessage(prevMessages);
+    const checkoutChanged =
+      checkoutFingerprint(checkout) !== checkoutFingerprint(lastCheckout?.checkoutPayload);
+    if (checkout.checkout_url && checkoutChanged) {
       messages.push({
         id: createMessageId(),
         role: "assistant",
@@ -251,7 +316,16 @@ function buildRichMessages(
 
   if (action === "update_cart") {
     const cart = payload.cart ?? [];
-    if (cart.length > prevCartLength && cart.length > 0) {
+    if (payload.order_phase === "branch_pending") {
+      const hasBranchPrompt = prevMessages.some((msg) => msg.kind === "branch_prompt");
+      if (!hasBranchPrompt) {
+        messages.push({
+          id: createMessageId(),
+          role: "assistant",
+          kind: "branch_prompt",
+        });
+      }
+    } else if (cart.length > prevCartLength && cart.length > 0) {
       messages.push({
         id: createMessageId(),
         role: "assistant",
@@ -293,12 +367,14 @@ export interface UseLiveAgentResult {
   messages: ChatMessage[];
   processing: boolean;
   liveReady: boolean;
+  categoriesLoading: boolean;
   error: string | null;
   connect: () => void;
   disconnect: () => void;
   sendBinary: (data: ArrayBuffer) => void;
   sendControl: (payload: Record<string, unknown>) => void;
   sendTextMessage: (text: string) => void;
+  sendSelectCategory: (category: string, subcategory?: string) => void;
   sendVoiceControl: (action: "voice_start" | "voice_stop") => void;
 }
 
@@ -318,6 +394,7 @@ export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [processing, setProcessing] = useState(false);
   const [liveReady, setLiveReady] = useState(false);
+  const [categoriesLoading, setCategoriesLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -435,6 +512,37 @@ export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
     [sendControl],
   );
 
+  const sendSelectCategory = useCallback(
+    (category: string, subcategory?: string) => {
+      if (wsRef.current?.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      const label = subcategory
+        ? getCategoryLabel(subcategory)
+        : getCategoryLabel(category);
+      appendUserText(`Browsing ${label}`);
+      sendControl({
+        type: "select_category",
+        category,
+        ...(subcategory ? { subcategory } : {}),
+      });
+    },
+    [appendUserText, sendControl],
+  );
+
+  const loadCategories = useCallback(async () => {
+    setCategoriesLoading(true);
+    try {
+      const categories = await fetchCategories();
+      sessionRef.current = { ...sessionRef.current, categories };
+      setSession((prev) => ({ ...prev, categories }));
+    } catch {
+      // Categories API may be unavailable before backend ships; picker stays empty.
+    } finally {
+      setCategoriesLoading(false);
+    }
+  }, []);
+
   const disconnect = useCallback(() => {
     wsRef.current?.close();
     wsRef.current = null;
@@ -475,33 +583,40 @@ export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
         } else if (envelope.type === "text") {
           finalizeOrAppendText(envelope.role, envelope.content);
         } else if (envelope.type === "ui") {
-          const payload = envelope.payload as UiPayload;
-          const prevCartLength = sessionRef.current.cart.length;
-          const merged = mergeSession(sessionRef.current, payload, envelope.action);
-          sessionRef.current = merged;
-          setUiState({ action: envelope.action, payload });
-          setSession(merged);
-          setMessages((msgPrev) => {
-            const richMessages = buildRichMessages(
-              envelope.action,
-              payload,
-              prevCartLength,
-              msgPrev,
-              merged.products,
-              merged.search_query,
-            );
-            return richMessages.length > 0 ? [...msgPrev, ...richMessages] : msgPrev;
-          });
-          const checkout = extractCheckoutPayload(payload);
-          if (checkout) {
-            setCheckoutPayload((prev) => ({
-              ...prev,
-              ...checkout,
-              cart: checkout.cart?.length ? checkout.cart : prev?.cart,
-              delivery_info: checkout.delivery_info ?? prev?.delivery_info,
-              checkout_info: checkout.checkout_info ?? prev?.checkout_info,
-            }));
-          }
+          void (async () => {
+            let payload = envelope.payload as UiPayload;
+            if (envelope.action === "show_categories" && !payload.categories?.length) {
+              await loadCategories();
+              payload = { ...payload, categories: sessionRef.current.categories };
+            }
+            const prevCartLength = sessionRef.current.cart.length;
+            const merged = mergeSession(sessionRef.current, payload, envelope.action);
+            sessionRef.current = merged;
+            setUiState({ action: envelope.action, payload });
+            setSession(merged);
+            setMessages((msgPrev) => {
+              const richMessages = buildRichMessages(
+                envelope.action,
+                payload,
+                prevCartLength,
+                msgPrev,
+                merged.products,
+                merged.search_query,
+                merged.categories,
+              );
+              return richMessages.length > 0 ? [...msgPrev, ...richMessages] : msgPrev;
+            });
+            const checkout = extractCheckoutPayload(payload);
+            if (checkout) {
+              setCheckoutPayload((prev) => ({
+                ...prev,
+                ...checkout,
+                cart: checkout.cart?.length ? checkout.cart : prev?.cart,
+                delivery_info: checkout.delivery_info ?? prev?.delivery_info,
+                checkout_info: checkout.checkout_info ?? prev?.checkout_info,
+              }));
+            }
+          })();
         } else if (envelope.type === "control") {
           if (envelope.action === "processing") {
             setProcessing(true);
@@ -541,7 +656,7 @@ export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
       setProcessing(false);
       setLiveReady(false);
     };
-  }, [finalizeOrAppendText, sessionId, upsertTranscript]);
+  }, [finalizeOrAppendText, loadCategories, sessionId, upsertTranscript]);
 
   useEffect(() => {
     return () => {
@@ -557,12 +672,14 @@ export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
     messages,
     processing,
     liveReady,
+    categoriesLoading,
     error,
     connect,
     disconnect,
     sendBinary,
     sendControl,
     sendTextMessage,
+    sendSelectCategory,
     sendVoiceControl,
   };
 }

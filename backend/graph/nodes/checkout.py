@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from graph.order_lifecycle import mark_link_ready
 from graph.state import AgentState
 from kapruka_mcp.kapruka_tools import KaprukaMCPError, kapruka_create_order
 
@@ -136,6 +137,7 @@ def checkout_node(state: AgentState) -> dict[str, Any]:
     }
 
     return {
+        **mark_link_ready(cart),
         "checkout_result": checkout_result,
         "ui_action": {
             "action": "show_checkout",

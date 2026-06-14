@@ -15,6 +15,7 @@ from config import settings
 from live.connection_pool import get_or_create_session, update_agent_state
 from live.gemini_client import GeminiLiveSession
 from live.handoff import run_intent_handoff
+from graph.category_catalog import catalog_label
 from live.text_intent import TextIntentBusyError, emit_assistant_text, run_text_intent
 
 logger = logging.getLogger(__name__)
@@ -241,6 +242,77 @@ async def _stop_live_session(pool_session: dict) -> None:
     pool_session["audio_frozen"] = False
 
 
+async def _handle_select_category(
+    *,
+    session_id: str,
+    websocket: WebSocket,
+    pool_session: dict,
+    category: str,
+    subcategory: str | None = None,
+    label: str | None = None,
+) -> None:
+    category = (category or "").strip()
+    if not category:
+        return
+
+    if pool_session.get("handoff_running"):
+        logger.info("Category tap ignored during handoff for session %s", session_id)
+        return
+
+    display_label = (label or "").strip() or catalog_label(category)
+    if subcategory:
+        display_label = subcategory
+
+    agent_state = dict(pool_session.get("agent_state") or {})
+    payload: dict[str, Any] = {
+        "category": category,
+        "search_query": subcategory or display_label,
+        "category_label": display_label,
+    }
+    if subcategory:
+        payload["subcategory"] = subcategory
+
+    agent_state["ui_action"] = {
+        "action": "show_products",
+        "payload": payload,
+    }
+    update_agent_state(session_id, agent_state)
+
+    intent = f"Browse {display_label}"
+    try:
+        await run_text_intent(
+            session_id=session_id,
+            websocket=websocket,
+            intent_text=intent,
+            voice_mode=True,
+            pool_session=pool_session,
+        )
+        logger.info(
+            "Category browse for session %s: %s / %s",
+            session_id,
+            category,
+            subcategory or display_label,
+        )
+    except TextIntentBusyError:
+        await emit_assistant_text(
+            websocket,
+            "Still working on your last request — please wait a moment.",
+        )
+    except Exception:
+        logger.exception("Failed category browse for session %s", session_id)
+        with suppress(Exception):
+            await websocket.send_json(
+                {
+                    "type": "control",
+                    "action": "error",
+                    "message": (
+                        "Could not load that category right now. "
+                        "Please try again or tell Kapru what you'd like to send."
+                    ),
+                }
+            )
+
+
 async def _handle_select_product(
     *,
     session_id: str,
@@ -375,7 +447,20 @@ async def handle_stream(websocket: WebSocket, session_id: str) -> None:
                             pool_session=pool_session,
                             product_id=product_id,
                         )
-                continue
+                    continue
+
+                if ctrl_type == "select_category":
+                    category = ctrl.get("category")
+                    if category:
+                        await _handle_select_category(
+                            session_id=session_id,
+                            websocket=websocket,
+                            pool_session=pool_session,
+                            category=str(category),
+                            subcategory=ctrl.get("subcategory"),
+                            label=ctrl.get("label"),
+                        )
+                    continue
 
             pcm_chunk = message.get("bytes")
             if pcm_chunk is None:

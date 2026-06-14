@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef } from "react";
 import type { ChatMessage, VoicePhase } from "../types";
-import { CategoryChips } from "./CategoryChips";
+import { CategoryPicker } from "./CategoryPicker";
 import { CheckoutCard } from "./CheckoutCard";
 import { DeliveryBanner } from "./DeliveryBanner";
 import { MicButton } from "./MicButton";
@@ -22,6 +22,9 @@ interface ChatPanelProps {
   selectedProductId?: string;
   onSelectProduct?: (product: import("../types").Product) => void;
   onOpenCart?: () => void;
+  checkoutStale?: boolean;
+  onRequestNewLink?: () => void;
+  onSelectCategory?: (category: string, subcategory?: string) => void;
 }
 
 function linkifyContent(content: string, isUser: boolean) {
@@ -85,11 +88,19 @@ function RichMessageBlock({
   selectedProductId,
   onSelectProduct,
   onOpenCart,
+  checkoutStale,
+  onSend,
+  onRequestNewLink,
+  onSelectCategory,
 }: {
   message: ChatMessage;
   selectedProductId?: string;
   onSelectProduct?: (product: import("../types").Product) => void;
   onOpenCart?: () => void;
+  checkoutStale?: boolean;
+  onSend?: (text: string) => void;
+  onRequestNewLink?: () => void;
+  onSelectCategory?: (category: string, subcategory?: string) => void;
 }) {
   return (
     <motion.div
@@ -110,10 +121,48 @@ function RichMessageBlock({
           />
         ) : null}
         {message.kind === "checkout" && message.checkoutPayload ? (
-          <CheckoutCard inline payload={message.checkoutPayload} />
+          <CheckoutCard
+            inline
+            payload={message.checkoutPayload}
+            stale={checkoutStale}
+            onRequestNewLink={onRequestNewLink}
+          />
         ) : null}
         {message.kind === "delivery" && message.delivery ? (
           <DeliveryBanner inline delivery={message.delivery} />
+        ) : null}
+        {message.kind === "categories" ? (
+          <CategoryPicker
+            compact
+            categories={message.categories ?? []}
+            onSelectCategory={onSelectCategory}
+          />
+        ) : null}
+        {message.kind === "branch_prompt" ? (
+          <div className="rounded-2xl rounded-bl-sm border border-[#402970]/15 bg-[#F0EEFA] px-4 py-4 text-sm text-[#222222]">
+            <p className="font-medium">You already have a payment link open.</p>
+            <p className="mt-1 text-[#494550]">
+              Should I add this to that order, or start a new gift?
+            </p>
+            {onSend ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => onSend("Add to this order")}
+                  className="rounded-full bg-[#402970] px-4 py-2 text-xs font-semibold text-white hover:bg-[#2a1059]"
+                >
+                  Add to this order
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSend("Start a new gift")}
+                  className="rounded-full border border-[#402970]/20 bg-white px-4 py-2 text-xs font-semibold text-[#402970] hover:bg-[#402970]/5"
+                >
+                  New gift
+                </button>
+              </div>
+            ) : null}
+          </div>
         ) : null}
         {message.kind === "cart_notice" ? (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl rounded-bl-sm border border-[#402970]/10 bg-[#F0EEFA] px-4 py-3 text-sm text-[#222222]">
@@ -141,6 +190,10 @@ function renderMessage(
   selectedProductId?: string,
   onSelectProduct?: (product: import("../types").Product) => void,
   onOpenCart?: () => void,
+  checkoutStale?: boolean,
+  onSend?: (text: string) => void,
+  onRequestNewLink?: () => void,
+  onSelectCategory?: (category: string, subcategory?: string) => void,
 ) {
   if (message.kind === "text") {
     return <MessageBubble message={message} />;
@@ -151,6 +204,10 @@ function renderMessage(
       selectedProductId={selectedProductId}
       onSelectProduct={onSelectProduct}
       onOpenCart={onOpenCart}
+      checkoutStale={checkoutStale}
+      onSend={onSend}
+      onRequestNewLink={onRequestNewLink}
+      onSelectCategory={onSelectCategory}
     />
   );
 }
@@ -170,6 +227,9 @@ export function ChatPanel({
   selectedProductId,
   onSelectProduct,
   onOpenCart,
+  checkoutStale,
+  onRequestNewLink,
+  onSelectCategory,
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -193,14 +253,6 @@ export function ChatPanel({
     if (inputRef.current) {
       inputRef.current.value = "";
     }
-  };
-
-  const handleChipSelect = (hint: string) => {
-    if (!connected) {
-      onConnect?.();
-      return;
-    }
-    onSend(hint);
   };
 
   return (
@@ -251,10 +303,6 @@ export function ChatPanel({
               ආයුබෝවන් · Vanakkam · Welcome
             </motion.p>
 
-            <div className="mt-10 w-full max-w-lg px-2">
-              <CategoryChips onSelect={handleChipSelect} disabled={processing} />
-            </div>
-
             {!connected ? (
               <motion.button
                 initial={{ opacity: 0, y: 8 }}
@@ -276,7 +324,16 @@ export function ChatPanel({
             <AnimatePresence initial={false}>
               {messages.map((message) => (
                 <div key={message.id}>
-                  {renderMessage(message, selectedProductId, onSelectProduct, onOpenCart)}
+                  {renderMessage(
+                    message,
+                    selectedProductId,
+                    onSelectProduct,
+                    onOpenCart,
+                    checkoutStale,
+                    onSend,
+                    onRequestNewLink,
+                    onSelectCategory,
+                  )}
                 </div>
               ))}
             </AnimatePresence>

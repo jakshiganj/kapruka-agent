@@ -108,6 +108,13 @@ export default function App() {
     sendControlRef.current({ type: "select_product", product_id: product.id });
   }, []);
 
+  const handleSelectCategory = useCallback(
+    (category: string, subcategory?: string) => {
+      live.sendSelectCategory(category, subcategory);
+    },
+    [live],
+  );
+
   useEffect(() => {
     if (live.uiState.action === "update_cart" && cart.length > 0) {
       setCartOpen(true);
@@ -122,6 +129,10 @@ export default function App() {
 
   const connected = live.connectionState === "connected";
   const itemCount = cart.reduce((n, i) => n + i.quantity, 0);
+
+  const handleRequestNewLink = useCallback(() => {
+    live.sendTextMessage("Please checkout");
+  }, [live]);
 
   return (
     <div className="flex h-full flex-col bg-[#fcf9f8]">
@@ -176,13 +187,19 @@ export default function App() {
         selectedProductId={selectedId}
         onSelectProduct={connected ? handleSelectProduct : undefined}
         onOpenCart={() => setCartOpen(true)}
+        checkoutStale={session.checkout_stale}
+        onRequestNewLink={handleRequestNewLink}
+        onSelectCategory={handleSelectCategory}
       />
 
       <CartDrawer
         open={cartOpen}
         cart={cart}
         delivery={session.delivery_info}
+        checkoutStale={session.checkout_stale}
+        checkoutSnapshot={session.checkout_cart_snapshot}
         onClose={() => setCartOpen(false)}
+        onRequestNewLink={handleRequestNewLink}
       />
     </div>
   );

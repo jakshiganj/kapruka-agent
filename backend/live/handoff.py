@@ -95,7 +95,7 @@ async def run_intent_handoff(
 
     try:
         # Step 3 — Run LangGraph (Model 2)
-        result, voice_prompt = await invoke_graph_intent(
+        result, voice_prompt, prior_agent_state = await invoke_graph_intent(
             session_id=session_id,
             intent_text=intent_text,
             voice_mode=True,
@@ -115,7 +115,7 @@ async def run_intent_handoff(
 
         # Step 5 — Emit UI event to client
         if result:
-            await emit_ui_result(websocket, result)
+            await emit_ui_result(websocket, result, prior_agent_state=prior_agent_state)
             ui_action = result.get("ui_action") or {}
             if ui_action.get("action") == "show_checkout":
                 logger.info(

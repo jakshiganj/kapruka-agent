@@ -35,7 +35,29 @@ export interface CheckoutInfo {
   gift_message?: string;
 }
 
-export type UiActionType = "show_products" | "update_cart" | "show_checkout" | null;
+export interface KaprukaCategory {
+  name: string;
+  label?: string;
+  emoji?: string;
+  iconUrl?: string;
+  url?: string;
+  children?: KaprukaCategory[];
+}
+
+export type UiActionType =
+  | "show_products"
+  | "show_categories"
+  | "update_cart"
+  | "show_checkout"
+  | null;
+
+export type OrderPhase = "shopping" | "link_ready" | "branch_pending";
+
+export interface CheckoutCartSnapshot {
+  item_count: number;
+  product_ids: string[];
+  lines?: Array<{ product_id: string; quantity: number }>;
+}
 
 export interface SessionPayload {
   products?: Product[];
@@ -44,11 +66,21 @@ export interface SessionPayload {
   cart?: CartItem[];
   delivery_info?: DeliveryInfo;
   checkout_info?: CheckoutInfo;
+  categories?: KaprukaCategory[];
+  category?: string;
+  subcategory?: string;
   error?: string;
+  order_phase?: OrderPhase;
+  checkout_stale?: boolean;
+  checkout_cart_snapshot?: CheckoutCartSnapshot;
 }
 
 export interface ShowProductsPayload extends SessionPayload {
   products?: Product[];
+}
+
+export interface ShowCategoriesPayload extends SessionPayload {
+  categories?: KaprukaCategory[];
 }
 
 export interface UpdateCartPayload extends SessionPayload {
@@ -68,7 +100,11 @@ export interface CheckoutPayload extends SessionPayload {
   expires_at?: string;
 }
 
-export type UiPayload = ShowProductsPayload | UpdateCartPayload | CheckoutPayload;
+export type UiPayload =
+  | ShowProductsPayload
+  | ShowCategoriesPayload
+  | UpdateCartPayload
+  | CheckoutPayload;
 
 export interface UiEnvelope {
   type: "ui";
@@ -101,9 +137,11 @@ export type ChatRole = "user" | "assistant";
 export type ChatMessageKind =
   | "text"
   | "products"
+  | "categories"
   | "checkout"
   | "delivery"
-  | "cart_notice";
+  | "cart_notice"
+  | "branch_prompt";
 
 export type ChatMessageStatus = "streaming" | "final";
 
@@ -114,6 +152,7 @@ export interface ChatMessage {
   content?: string;
   status?: ChatMessageStatus;
   products?: Product[];
+  categories?: KaprukaCategory[];
   searchQuery?: string;
   searchError?: string;
   checkoutPayload?: CheckoutPayload;
@@ -151,8 +190,13 @@ export interface SessionSnapshot {
   delivery_info: DeliveryInfo;
   checkout_info: CheckoutInfo;
   products: Product[];
+  categories: KaprukaCategory[];
   search_query?: string;
   selected_product?: Product;
+  order_phase?: OrderPhase;
+  checkout_stale?: boolean;
+  checkout_cart_snapshot?: CheckoutCartSnapshot;
+  checkout_url?: string;
 }
 
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";

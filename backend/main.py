@@ -7,7 +7,14 @@ from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
 from config import settings
-from kapruka_mcp.kapruka_tools import get_mcp_stats, kapruka_list_delivery_cities, reset_mcp_stats, resolve_delivery_city
+from graph.categories_api import get_categories
+from kapruka_mcp.kapruka_tools import (
+    KaprukaMCPError,
+    get_mcp_stats,
+    kapruka_list_delivery_cities,
+    reset_mcp_stats,
+    resolve_delivery_city,
+)
 from graph.graph import build_graph
 from live.connection_pool import create_session, get_or_create_session, update_agent_state
 from ws_stream.stream_handler import handle_stream
@@ -43,6 +50,16 @@ def get_graph():
 @app.get("/health")
 def health() -> dict[str, str | bool]:
     return {"status": "ok", "gemini_configured": bool(settings.gemini_api_key)}
+
+
+@app.get("/api/categories")
+def api_categories(depth: int = 2, featured: bool = False) -> dict[str, Any]:
+    """Kapruka category tree enriched with display labels and icons."""
+    try:
+        return get_categories(depth=depth, featured_only=featured)
+    except KaprukaMCPError as exc:
+        message = str(exc).removeprefix("Error:").strip()
+        return {"error": message, "categories": [], "count": 0}
 
 
 @app.get("/dev/mcp-stats")
