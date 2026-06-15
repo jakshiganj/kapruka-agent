@@ -38,7 +38,7 @@ export function OrderProgress({ session, action }: OrderProgressProps) {
   return (
     <nav
       aria-label="Order progress"
-      className="flex flex-wrap items-center justify-center gap-2 md:gap-0"
+      className="flex flex-wrap items-center justify-center gap-1.5 md:gap-0"
     >
       {STEPS.map((step, index) => {
         const done = index < activeIndex;
@@ -48,15 +48,19 @@ export function OrderProgress({ session, action }: OrderProgressProps) {
             <div
               className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
                 current
-                  ? "bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/40"
+                  ? "bg-[#402970]/10 text-[#402970] ring-1 ring-[#402970]/25"
                   : done
-                    ? "bg-white/10 text-white"
-                    : "text-slate-500"
+                    ? "text-[#402970]"
+                    : "text-[#494550]/45"
               }`}
             >
               <span
-                className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${
-                  done ? "bg-emerald-500 text-slate-950" : current ? "bg-emerald-400 text-slate-950" : "bg-slate-800"
+                className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+                  done
+                    ? "bg-[#402970] text-white"
+                    : current
+                      ? "bg-[#FBD614] text-[#222222]"
+                      : "bg-[#402970]/10 text-[#402970]/50"
                 }`}
               >
                 {done ? "✓" : index + 1}
@@ -64,7 +68,11 @@ export function OrderProgress({ session, action }: OrderProgressProps) {
               {step.label}
             </div>
             {index < STEPS.length - 1 ? (
-              <div className={`mx-1 hidden h-px w-6 md:block ${done ? "bg-emerald-500/50" : "bg-white/10"}`} />
+              <div
+                className={`mx-1 hidden h-px w-6 md:block ${
+                  done ? "bg-[#402970]/40" : "bg-[#402970]/12"
+                }`}
+              />
             ) : null}
           </div>
         );

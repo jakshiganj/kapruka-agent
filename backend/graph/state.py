@@ -21,6 +21,9 @@ class AgentState(TypedDict):
     voice_prompt: str
     next_node: str
     voice_mode: NotRequired[bool]
+    preferred_language: NotRequired[str]
+    awaiting_delivery: NotRequired[bool]
+    checkout_confirmed: NotRequired[bool]
 
 
 NextNode = Literal["discovery", "cart_manager", "validation", "checkout", "end"]

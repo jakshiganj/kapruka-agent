@@ -81,16 +81,22 @@ def wants_add_product(user_text: str) -> bool:
 
 def is_delivery_followup(user_text: str, *, cart: list[Any] | None = None) -> bool:
     """True when the user is giving delivery city/date rather than browsing products."""
-    if not ISO_DATE_PATTERN.search(user_text):
-        return False
-    if cart:
+    if ISO_DATE_PATTERN.search(user_text):
+        if cart:
+            return True
+        if re.search(
+            r"(?i)\b(?:i want|i(?:'d| would) like|looking for|search(?:ing)? for|find|show me)\b",
+            user_text,
+        ) and re.search(r"(?i)\s+to\s+.+\s+on\s+20\d{2}-\d{2}-\d{2}\b", user_text):
+            return False
         return True
-    if re.search(
-        r"(?i)\b(?:i want|i(?:'d| would) like|looking for|search(?:ing)? for|find|show me)\b",
-        user_text,
-    ) and re.search(r"(?i)\s+to\s+.+\s+on\s+20\d{2}-\d{2}-\d{2}\b", user_text):
-        return False
-    return True
+    if cart:
+        from graph.date_parse import extract_delivery_city_and_date
+
+        city, iso = extract_delivery_city_and_date(user_text.strip(), aggressive=True)
+        if iso or city:
+            return True
+    return False
 
 
 def extract_followup_search_query(user_text: str) -> str | None:
@@ -183,6 +189,65 @@ def normalize_search_query(query: str | None) -> str:
     return re.sub(r"\s+", " ", (query or "").strip().lower())
 
 
+# Conversational / third-person framing the voice model adds around the real
+# product terms, e.g. "user wants to look for chocolates" -> "chocolates".
+_ENGLISH_LEAD_IN = {
+    "user", "users", "customer", "client", "the", "they", "he", "she",
+    "i", "id", "ill", "we", "want", "wants", "wanted", "wanting", "wanna",
+    "would", "like", "likes", "to", "look", "looking", "search", "searching",
+    "find", "finding", "get", "getting", "give", "gimme", "see", "show",
+    "browse", "buy", "purchase", "order", "for", "me", "us", "a", "an",
+    "some", "please", "is", "am", "are", "trying", "interested", "in",
+    "need", "needs", "wish", "wishes", "hoping", "let", "lets", "can",
+    "hey", "you", "again", "just", "kindly", "ok", "okay", "yeah", "yep",
+    "also", "instead", "another", "something", "anything", "could", "now",
+}
+
+# Tanglish/Sinhala vocatives and fillers that wrap the real query.
+# "machan, chocolate cake ekak ඕනේ" -> "chocolate cake".
+_TANGLISH_VOCATIVES = {
+    "machan", "machn", "mchn", "bro", "men", "aiya", "ayya", "malli",
+    "akka", "nangi", "putha", "duwa", "yaaluwa", "yaluwa",
+}
+# Filler that typically trails the product term ("...ekak ඕනේ" = "...want one").
+_TANGLISH_TRAILING = {
+    "ekak", "eka", "ek", "ekuth", "ona", "oni", "onae", "oney", "one",
+    "denna", "denne", "thiyenawada", "tikak", "korala", "plz", "please",
+    "ඕනේ", "ඕන", "ඕනි", "ඕනේද", "දෙන්න", "ටිකක්", "ද",
+}
+
+_LEAD_IN = _ENGLISH_LEAD_IN | _TANGLISH_VOCATIVES
+
+
+def _norm_token(token: str) -> str:
+    return token.strip(" \t\r\n,.!?:;\"'()[]").lower()
+
+
+def strip_intent_lead_in(text: str) -> str:
+    """Trim conversational framing so only the product terms remain.
+
+    The voice model phrases intents in the third person ("user wants to look
+    for chocolates") and Tanglish chips wrap terms in vocatives/fillers
+    ("machan, chocolate cake ekak ඕනේ"). Searching the whole phrase against the
+    catalog returns irrelevant matches, so strip the known filler from both ends.
+    """
+    cleaned = text.strip()
+    if not cleaned:
+        return cleaned
+    tokens = cleaned.split()
+
+    start = 0
+    while start < len(tokens) and _norm_token(tokens[start]) in _LEAD_IN:
+        start += 1
+
+    end = len(tokens)
+    while end > start and _norm_token(tokens[end - 1]) in _TANGLISH_TRAILING:
+        end -= 1
+
+    remainder = " ".join(tokens[start:end]).strip(" .,!?:;")
+    return remainder or cleaned
+
+
 def resolve_search_query(
     user_text: str,
     *,
@@ -211,6 +276,83 @@ def resolve_search_query(
     if products and wants_add_product(user_text):
         if resolve_carousel_pick(user_text, products, selected_product=selected_product):
             return None
+    return None
+
+
+RESEARCH_INTENT_PATTERN = re.compile(
+    r"(?i)\b(search\s+again|search\s+for|searching\s+for|look\s+for|looking\s+for|"
+    r"find|show\s+me|browse|instead|different|another|something\s+else|"
+    r"anything\s+else|new\s+search|change\s+(?:it|that|the\s+search))\b"
+)
+
+# Short replies that are conversational, not product searches.
+_NON_SEARCH_TERMS = {
+    "thanks", "thank", "thankyou", "ok", "okay", "yes", "no", "sure",
+    "cool", "nice", "great", "hello", "hi", "hey", "bye", "yeah", "yep",
+    "nope", "stop", "wait", "help", "back", "cancel", "done",
+}
+_NON_SEARCH_KEYWORDS = re.compile(
+    r"(?i)\b(checkout|pay|paying|deliver|delivery|order|cart|how|what|why|"
+    r"when|where|who|price|cost|recipient|sender|phone|address)\b"
+)
+
+
+def resolve_followup_search_query(
+    user_text: str,
+    products: list[dict[str, Any]],
+    *,
+    selected_product: dict[str, Any] | None = None,
+    allow_bare_noun: bool = True,
+    cart: list[Any] | None = None,
+) -> str | None:
+    """Detect a NEW catalog search while a carousel is already on screen.
+
+    Returns a cleaned query when the user asks to search for something else
+    (e.g. "search again for vegetables", or a bare "vegetables"), and None when
+    they are picking from the current results, confirming, or giving
+    delivery/checkout details.
+
+    Set ``allow_bare_noun=False`` (e.g. during checkout detail collection) to
+    require explicit search phrasing so a bare recipient name isn't mistaken
+    for a product search.
+    """
+    text = user_text.strip()
+    if not text or not products:
+        return None
+    if is_category_browse_intent(text) or is_delivery_followup(text, cart=cart):
+        return None
+    # Don't hijack an explicit pick or confirmation of a shown product.
+    if wants_add_product(text):
+        return None
+    if selected_product and CONFIRM_SELECTION_PATTERN.search(text):
+        return None
+    if pick_product_from_text(text, products):
+        return None
+
+    # 1) Structured browse/follow-up phrasing ("looking for X", "search for X").
+    structured = extract_browse_search_query(text) or extract_followup_search_query(text)
+    if structured:
+        cleaned = strip_intent_lead_in(structured)
+        if cleaned and len(cleaned) >= 2:
+            return cleaned
+
+    # 2) Explicit re-search intent — strip the conversational framing.
+    if RESEARCH_INTENT_PATTERN.search(text):
+        cleaned = strip_intent_lead_in(text)
+        if cleaned and len(cleaned) >= 2 and not _NON_SEARCH_KEYWORDS.search(cleaned):
+            return cleaned
+
+    # 3) Bare short noun phrase (not conversational/transactional) -> new search.
+    if allow_bare_noun:
+        cleaned = strip_intent_lead_in(text)
+        words = cleaned.split()
+        if (
+            1 <= len(words) <= 4
+            and cleaned.lower() not in _NON_SEARCH_TERMS
+            and not _NON_SEARCH_KEYWORDS.search(cleaned)
+        ):
+            return cleaned
+
     return None
 
 

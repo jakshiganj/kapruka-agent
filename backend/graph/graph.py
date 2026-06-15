@@ -4,6 +4,7 @@ from langgraph.graph import END, StateGraph
 from graph.nodes.cart_manager import cart_manager_node
 from graph.nodes.checkout import checkout_node
 from graph.nodes.discovery import discovery_node
+from graph.nodes.order_tracking import order_tracking_node
 from graph.nodes.router import router_node
 from graph.nodes.validation import validation_node
 from graph.state import AgentState
@@ -24,6 +25,7 @@ def build_graph():
     builder.add_node("cart_manager", cart_manager_node)
     builder.add_node("validation", validation_node)
     builder.add_node("checkout", checkout_node)
+    builder.add_node("order_tracking", order_tracking_node)
 
     builder.set_entry_point("router")
 
@@ -35,6 +37,7 @@ def build_graph():
             "cart_manager": "cart_manager",
             "validation": "validation",
             "checkout": "checkout",
+            "order_tracking": "order_tracking",
             END: END,
         },
     )
@@ -43,6 +46,7 @@ def build_graph():
     builder.add_edge("cart_manager", "router")
     builder.add_edge("validation", "router")
     builder.add_edge("checkout", END)
+    builder.add_edge("order_tracking", END)
 
     checkpointer = MemorySaver()
     return builder.compile(checkpointer=checkpointer)

@@ -8,6 +8,8 @@ class Settings(BaseSettings):
         default="https://mcp.kapruka.com/mcp",
         alias="KAPRUKA_MCP_URL",
     )
+    # Optional: when set, sessions/carts persist across restarts and workers.
+    redis_url: str = Field(default="", alias="REDIS_URL")
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

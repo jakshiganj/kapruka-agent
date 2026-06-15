@@ -58,6 +58,7 @@ def cart_manager_node(state: AgentState) -> dict[str, Any]:
                 "perishable_flag": is_perishable_product(product_id),
                 "price": price,
                 "name": selected.get("name", ""),
+                "image_url": selected.get("image_url"),
             }
         )
 

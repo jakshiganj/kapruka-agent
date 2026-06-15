@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from graph.category_catalog import catalog_label
@@ -8,9 +9,60 @@ from graph.state import AgentState
 from graph.product_pick import (
     pick_product_from_text,
     resolve_search_query,
+    strip_intent_lead_in,
     wants_add_product,
 )
 from kapruka_mcp.kapruka_tools import KaprukaMCPError, kapruka_search_products
+
+
+# Map common free-text gift terms to a Kapruka category so we scope the search
+# (raw keyword search returned junk like a thesaurus for "chocolate" or
+# "Machan Computers" for Tanglish). Keys are matched as whole words.
+_CATEGORY_KEYWORDS: dict[str, str] = {
+    "cake": "cakes", "cakes": "cakes", "gateau": "cakes",
+    "chocolate": "Chocolates", "chocolates": "Chocolates", "choc": "Chocolates",
+    "flower": "flowers", "flowers": "flowers", "bouquet": "flowers", "roses": "flowers",
+    "perfume": "Perfumes", "perfumes": "Perfumes", "fragrance": "Perfumes", "cologne": "Perfumes",
+    "hamper": "combopack", "hampers": "combopack",
+    "fruit": "Fruits", "fruits": "Fruits",
+    "vegetable": "Vegetables", "vegetables": "Vegetables", "veg": "Vegetables",
+    "jewelry": "Jewellery", "jewellery": "Jewellery", "watch": "Jewellery",
+    "ring": "Jewellery", "necklace": "Jewellery", "bracelet": "Jewellery",
+    "toy": "KidsToys", "toys": "KidsToys",
+    "book": "Books", "books": "Books",
+    "cosmetic": "Cosmetics", "cosmetics": "Cosmetics", "makeup": "Cosmetics",
+    "baby": "BabyItems",
+    "grocery": "Grocery", "groceries": "Grocery",
+    "cushion": "Personalized Gifts", "mug": "Personalized Gifts", "frame": "Personalized Gifts",
+}
+
+
+def _infer_category(query: str) -> str | None:
+    # Prefer the last matching token — the head noun in English usually comes
+    # last ("chocolate cake" -> cakes, "fruit basket" -> Fruits).
+    tokens = re.findall(r"[a-z]+", query.lower())
+    inferred: str | None = None
+    for token in tokens:
+        category = _CATEGORY_KEYWORDS.get(token)
+        if category:
+            inferred = category
+    return inferred
+
+
+def _filter_relevant(products: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
+    """Drop results with zero query-token overlap, but only if enough remain."""
+    tokens = [t for t in re.findall(r"[a-z0-9]+", query.lower()) if len(t) > 2]
+    if not tokens:
+        return products
+    relevant = [
+        p
+        for p in products
+        if any(
+            t in f"{p.get('name', '')} {p.get('summary', '') or ''}".lower()
+            for t in tokens
+        )
+    ]
+    return relevant if len(relevant) >= 3 else products
 
 
 def _latest_user_text(state: AgentState) -> str:
@@ -26,13 +78,16 @@ def _search_query(state: AgentState) -> str:
     user_text = _latest_user_text(state)
     resolved = resolve_search_query(user_text)
     if resolved:
-        return resolved
+        return strip_intent_lead_in(resolved)
 
     ui_payload = (state.get("ui_action") or {}).get("payload") or {}
     if ui_payload.get("search_query"):
         return str(ui_payload["search_query"])
 
-    return user_text.strip() or "chocolate cake"
+    # No clean query extracted — trim the voice model's conversational framing
+    # ("user wants to look for chocolates" -> "chocolates") before searching.
+    cleaned = strip_intent_lead_in(user_text)
+    return cleaned or "chocolate cake"
 
 
 def _browse_context(state: AgentState) -> tuple[str | None, str | None, str | None]:
@@ -61,8 +116,18 @@ def discovery_node(state: AgentState) -> dict[str, Any]:
             query = str(browse.get("search_query") or query)
             browse_label = str(browse.get("label") or catalog_label(category))
         else:
-            result = kapruka_search_products(q=query, in_stock_only=True, limit=10)
-            products = result.get("results") or []
+            # Scope known gift terms to their category for far better relevance;
+            # fall back to a plain keyword search otherwise.
+            inferred = _infer_category(query)
+            if inferred:
+                browse = search_category_products(inferred, limit=10)
+                products = browse.get("products") or []
+                if not products:
+                    result = kapruka_search_products(q=query, in_stock_only=True, limit=10)
+                    products = _filter_relevant(result.get("results") or [], query)
+            else:
+                result = kapruka_search_products(q=query, in_stock_only=True, limit=10)
+                products = _filter_relevant(result.get("results") or [], query)
             browse_label = None
     except KaprukaMCPError as exc:
         message = str(exc).removeprefix("Error:").strip()
@@ -96,8 +161,9 @@ def discovery_node(state: AgentState) -> dict[str, Any]:
                 "payload": empty_payload,
             },
             "voice_prompt": (
-                f"I couldn't find any in-stock products in {empty_label}. "
-                "Try another subcategory or tell me what you'd like to send."
+                f"I couldn't find any in-stock matches for {empty_label}. "
+                "Try a different term, or tap a category below to browse — "
+                "cakes, flowers, chocolates, hampers, perfumes."
             ),
             "next_node": "end",
         }

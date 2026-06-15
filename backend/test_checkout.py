@@ -30,7 +30,7 @@ async def main() -> None:
     assert result["delivery_info"].get("validated") == "true"
     assert result["cart"]
 
-    # Turn 2 — checkout details
+    # Turn 2 — checkout details -> the agent shows the checkout form (no order yet).
     checkout_intent = (
         "Please checkout. Recipient is Amara Silva, phone 0771234567, "
         "address 123 Main Street Kadawatha, sender is Jakshigan."
@@ -40,6 +40,18 @@ async def main() -> None:
             **result,
             "messages": result["messages"] + [HumanMessage(content=checkout_intent)],
             "voice_mode": True,
+        },
+        config={"configurable": {"thread_id": session["langgraph_thread_id"]}},
+    )
+    assert result["ui_action"]["action"] == "show_checkout_form", result
+
+    # Turn 3 — user confirms via the form (submit_checkout sets checkout_confirmed).
+    result = await app.ainvoke(
+        {
+            **result,
+            "messages": result["messages"] + [HumanMessage(content="Place order")],
+            "checkout_confirmed": True,
+            "voice_mode": False,
         },
         config={"configurable": {"thread_id": session["langgraph_thread_id"]}},
     )

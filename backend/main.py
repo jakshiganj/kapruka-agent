@@ -1,8 +1,11 @@
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
@@ -11,11 +14,14 @@ from graph.categories_api import get_categories
 from kapruka_mcp.kapruka_tools import (
     KaprukaMCPError,
     get_mcp_stats,
+    kapruka_check_delivery,
+    kapruka_get_product,
     kapruka_list_delivery_cities,
     reset_mcp_stats,
     resolve_delivery_city,
 )
 from graph.graph import build_graph
+from live import session_store
 from live.connection_pool import create_session, get_or_create_session, update_agent_state
 from ws_stream.stream_handler import handle_stream
 
@@ -26,7 +32,11 @@ _graph = None
 async def lifespan(app: FastAPI):
     if not settings.kapruka_mcp_url:
         raise RuntimeError("KAPRUKA_MCP_URL is required in backend/.env")
-    yield
+    await session_store.init_redis()
+    try:
+        yield
+    finally:
+        await session_store.close_redis()
 
 
 app = FastAPI(title="Kapruka Agent Backend", lifespan=lifespan)
@@ -60,6 +70,50 @@ def api_categories(depth: int = 2, featured: bool = False) -> dict[str, Any]:
     except KaprukaMCPError as exc:
         message = str(exc).removeprefix("Error:").strip()
         return {"error": message, "categories": [], "count": 0}
+
+
+@app.get("/api/product/{product_id}")
+def api_product(product_id: str) -> dict[str, Any]:
+    """Full product detail (images, variants, stock, shipping) for the detail sheet."""
+    try:
+        return {"product": kapruka_get_product(product_id)}
+    except KaprukaMCPError as exc:
+        message = str(exc).removeprefix("Error:").strip()
+        return {"error": message, "product": None}
+
+
+@app.get("/api/delivery-estimate")
+def api_delivery_estimate(
+    city: str,
+    date: str | None = None,
+    product_id: str | None = None,
+) -> dict[str, Any]:
+    """Quote delivery to a Sri Lankan city before a cart exists."""
+    try:
+        canonical_city = resolve_delivery_city(city)
+    except KaprukaMCPError as exc:
+        message = str(exc).removeprefix("Error:").strip()
+        return {"available": None, "error": message, "city": city}
+
+    try:
+        check = kapruka_check_delivery(
+            city=canonical_city,
+            delivery_date=date,
+            product_id=product_id,
+        )
+    except KaprukaMCPError as exc:
+        message = str(exc).removeprefix("Error:").strip()
+        return {"available": None, "error": message, "city": canonical_city}
+
+    return {
+        "city": canonical_city,
+        "date": date,
+        "available": check.get("available"),
+        "rate": check.get("rate"),
+        "reason": check.get("reason"),
+        "next_available_date": check.get("next_available_date"),
+        "perishable_warning": check.get("perishable_warning"),
+    }
 
 
 @app.get("/dev/mcp-stats")
@@ -127,3 +181,12 @@ async def dev_invoke(body: DevInvokeRequest) -> dict[str, Any]:
 @app.websocket("/ws/stream/{session_id}")
 async def ws_stream(websocket: WebSocket, session_id: str) -> None:
     await handle_stream(websocket, session_id)
+
+
+# Serve the built single-page app when present (production / Docker). API, WebSocket,
+# and /dev routes above are matched first; this mount only handles everything else.
+_frontend_dist = Path(
+    os.getenv("FRONTEND_DIST", Path(__file__).resolve().parent.parent / "frontend" / "dist")
+)
+if _frontend_dist.is_dir():
+    app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")

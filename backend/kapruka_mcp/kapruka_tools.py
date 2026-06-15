@@ -8,6 +8,7 @@ import logging
 import re
 import threading
 import time
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from collections import deque
 from contextlib import AsyncExitStack
 from dataclasses import asdict, dataclass, field
@@ -26,9 +27,13 @@ PERISHABLE_PREFIXES = ("CAKE", "FLOWER", "COMBO")
 MCP_REQUESTS_PER_MINUTE = 60
 MCP_ORDER_LIMIT_PER_HOUR = 30
 MCP_READ_CACHE_TTL_SECONDS = 30 * 60  # matches server-side product/category cache
-MCP_RATE_LIMIT_RETRIES = 1  # one retry after server says rate limited
+MCP_RATE_LIMIT_RETRIES = 1  # one retry after server says rate limited / transient 5xx
 MCP_RATE_LIMIT_BACKOFF_SECONDS = 5.0
+_TRANSIENT_HTTP_MARKERS = ("429", "502", "503", "520", "Too Many Requests")
 MCP_MAX_WAIT_SECONDS = 15.0  # fail fast for voice UX if limiter would block longer
+MCP_CONNECT_TIMEOUT = 12.0
+MCP_CALL_TIMEOUT = 20.0
+MCP_RUN_TIMEOUT = 35.0  # max wall time for one sync tool call (connect + call + retry)
 
 READ_TOOLS = frozenset(
     {
@@ -57,6 +62,7 @@ class MCPCallRecord:
 
 
 _call_log: deque[MCPCallRecord] = deque(maxlen=200)
+_in_flight: dict[str, float] = {}
 
 
 def _record_call(
@@ -100,6 +106,7 @@ def get_mcp_stats() -> dict[str, Any]:
         "cache_hits": sum(1 for r in _call_log if r.cached),
         "failures": len(failures),
         "rate_limit_errors": len(rate_limits),
+        "in_flight": list(_in_flight.keys()),
         "by_tool": dict(by_tool),
         "recent": [asdict(r) for r in list(_call_log)[-15:]],
         "limits": {
@@ -111,6 +118,11 @@ def get_mcp_stats() -> dict[str, Any]:
 
 def reset_mcp_stats() -> None:
     _call_log.clear()
+    _in_flight.clear()
+
+
+def _is_transient_http_error(message: str) -> bool:
+    return any(marker in message for marker in _TRANSIENT_HTTP_MARKERS)
 
 
 class _SlidingWindowLimiter:
@@ -190,7 +202,15 @@ class _KaprukaMCPClient:
     async def _connect(self) -> ClientSession:
         if self._session is not None:
             return self._session
+        try:
+            return await asyncio.wait_for(self._open_session(), timeout=MCP_CONNECT_TIMEOUT)
+        except asyncio.TimeoutError as exc:
+            await self._reset_session()
+            raise KaprukaMCPError(
+                "Error: Kapruka MCP connection timed out. Please try again in a few seconds."
+            ) from exc
 
+    async def _open_session(self) -> ClientSession:
         self._exit_stack = AsyncExitStack()
         read_stream, write_stream, _ = await self._exit_stack.enter_async_context(
             streamablehttp_client(settings.kapruka_mcp_url)
@@ -203,20 +223,30 @@ class _KaprukaMCPClient:
         return session
 
     async def _reset_session(self) -> None:
+        """Drop the current MCP session; reconnect lazily on the next tool call."""
         self._session = None
         stack = self._exit_stack
         self._exit_stack = None
-        if stack is not None:
-            try:
-                await stack.aclose()
-            except Exception:
-                logger.exception("Kapruka MCP session reset failed")
+        if stack is None:
+            return
+        try:
+            await stack.aclose()
+        except Exception as exc:
+            # Broken sessions (520, timeout cancel) often fail anyio teardown — orphan is fine.
+            logger.warning(
+                "Kapruka MCP session teardown skipped (%s); will open a fresh session next call.",
+                type(exc).__name__,
+            )
 
-    def _run_coro(self, coro: Any) -> Any:
+    def _run_coro(self, coro: Any, *, timeout: float = MCP_RUN_TIMEOUT) -> Any:
         loop = self._ensure_loop()
         future = asyncio.run_coroutine_threadsafe(coro, loop)
         try:
-            return future.result(timeout=180)
+            return future.result(timeout=timeout)
+        except FuturesTimeoutError as exc:
+            raise KaprukaMCPError(
+                "Error: Kapruka request timed out. Please try again in a few seconds."
+            ) from exc
         except asyncio.CancelledError as exc:
             raise KaprukaMCPError(
                 "Error: Kapruka request was interrupted. Please try again in a few seconds."
@@ -267,25 +297,50 @@ class _KaprukaMCPClient:
         payload = {"params": {**params, "response_format": "json"}}
 
         last_error: KaprukaMCPError | None = None
+        _in_flight[tool_name] = time.monotonic()
+        logger.info("Kapruka MCP call starting: %s", tool_name)
         try:
             for attempt in range(MCP_RATE_LIMIT_RETRIES + 1):
                 session = await self._connect()
                 await self._acquire_limits(tool_name)
                 try:
-                    result = await session.call_tool(tool_name, payload)
+                    result = await asyncio.wait_for(
+                        session.call_tool(tool_name, payload),
+                        timeout=MCP_CALL_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    await self._reset_session()
+                    last_error = KaprukaMCPError(
+                        f"Error: Kapruka {tool_name} timed out after {MCP_CALL_TIMEOUT:.0f}s. "
+                        "Please try again in a few seconds."
+                    )
+                    if attempt < MCP_RATE_LIMIT_RETRIES:
+                        logger.warning(
+                            "Kapruka MCP timeout on %s; retrying in %.0fs",
+                            tool_name,
+                            MCP_RATE_LIMIT_BACKOFF_SECONDS,
+                        )
+                        await asyncio.sleep(MCP_RATE_LIMIT_BACKOFF_SECONDS)
+                        continue
+                    raise last_error
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
                     message = str(exc) or type(exc).__name__
-                    is_rate_limit = "429" in message or "Too Many Requests" in message
-                    if is_rate_limit:
-                        last_error = KaprukaMCPError(
-                            "Error: Kapruka rate limit reached. Please wait about a minute."
-                        )
+                    if _is_transient_http_error(message):
+                        if "429" in message or "Too Many Requests" in message:
+                            last_error = KaprukaMCPError(
+                                "Error: Kapruka rate limit reached. Please wait about a minute."
+                            )
+                        else:
+                            last_error = KaprukaMCPError(
+                                "Error: Kapruka is temporarily unavailable. Please try again in a few seconds."
+                            )
                         if attempt < MCP_RATE_LIMIT_RETRIES:
                             logger.warning(
-                                "Kapruka MCP HTTP 429 on %s; retrying in %.0fs",
+                                "Kapruka MCP transient error on %s (%s); retrying in %.0fs",
                                 tool_name,
+                                message.split("\n", 1)[0][:120],
                                 MCP_RATE_LIMIT_BACKOFF_SECONDS,
                             )
                             await asyncio.sleep(MCP_RATE_LIMIT_BACKOFF_SECONDS)
@@ -371,6 +426,8 @@ class _KaprukaMCPClient:
                 detail=str(exc),
             )
             raise
+        finally:
+            _in_flight.pop(tool_name, None)
 
     def call_tool_sync(self, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
         return self._run_coro(self._call_tool(tool_name, params))
@@ -459,11 +516,21 @@ def _city_name_matches(user_city: str, city: dict[str, Any]) -> bool:
     return False
 
 
+# Canonical city resolutions are stable, so cache them in-process to avoid
+# re-listing delivery cities (multiple MCP calls) on every checkout / re-validation.
+_city_resolution_cache: dict[str, str] = {}
+
+
 def resolve_delivery_city(user_city: str) -> str:
     """Resolve a user-provided city to a Kapruka canonical city name."""
     user_city = user_city.strip()
     if not user_city:
         raise KaprukaMCPError("Delivery city is required")
+
+    cache_key = re.sub(r"\s+", " ", user_city).lower()
+    cached_name = _city_resolution_cache.get(cache_key)
+    if cached_name:
+        return cached_name
 
     cities: list[dict[str, Any]] = []
     for query in _city_search_queries(user_city):
@@ -480,6 +547,7 @@ def resolve_delivery_city(user_city: str) -> str:
 
     for city in cities:
         if _city_name_matches(user_city, city):
+            _city_resolution_cache[cache_key] = city["name"]
             return city["name"]
 
     # Prefer exact Colombo zone when user gave a number (e.g. "Colombo 7").
@@ -489,6 +557,7 @@ def resolve_delivery_city(user_city: str) -> str:
         target = f"colombo {zone:02d}"
         for city in cities:
             if city.get("name", "").lower() == target:
+                _city_resolution_cache[cache_key] = city["name"]
                 return city["name"]
 
     suggestions = ", ".join(city.get("name", "") for city in cities[:5] if city.get("name"))

@@ -37,9 +37,14 @@ function mergeSession(
     payload.search_query != null && payload.search_query !== prev.search_query;
   const isShowProducts = action === "show_products";
   const isShowCategories = action === "show_categories";
+  const isUpdateCart = action === "update_cart";
 
   return {
-    cart: payload.cart?.length ? payload.cart : prev.cart,
+    cart: isUpdateCart && Array.isArray(payload.cart)
+      ? payload.cart
+      : payload.cart?.length
+        ? payload.cart
+        : prev.cart,
     delivery_info: payload.delivery_info && (
       payload.delivery_info.city ||
       payload.delivery_info.date ||
@@ -285,6 +290,24 @@ function buildRichMessages(
     });
   }
 
+  if (action === "show_order_tracking") {
+    const trackingPayload = payload as unknown as {
+      order_number?: string;
+      tracking?: Record<string, unknown>;
+    };
+    if (trackingPayload.order_number) {
+      messages.push({
+        id: createMessageId(),
+        role: "assistant",
+        kind: "order_tracking",
+        orderTracking: {
+          order_number: trackingPayload.order_number,
+          tracking: trackingPayload.tracking ?? {},
+        },
+      });
+    }
+  }
+
   if (action === "show_categories") {
     const categories = payload.categories?.length
       ? payload.categories
@@ -437,11 +460,17 @@ export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
     setMessages((prev) => {
       const finalized = finalizeStreamingMessages(prev, role);
 
-      const lastTextIdx = findLastTextIndex(finalized, role);
+      // Only suppress a TRULY consecutive duplicate (e.g. voice transcript echo
+      // immediately followed by the same text). If the user has spoken since,
+      // always show the reply even when its text repeats — otherwise the agent
+      // looks unresponsive when it gives the same guidance twice.
+      const last = finalized[finalized.length - 1];
       if (
-        lastTextIdx >= 0 &&
-        finalized[lastTextIdx]?.status === "final" &&
-        finalized[lastTextIdx]?.content === content
+        last &&
+        last.kind === "text" &&
+        last.role === role &&
+        last.status === "final" &&
+        last.content === content
       ) {
         return finalized;
       }
@@ -595,6 +624,53 @@ export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
             setUiState({ action: envelope.action, payload });
             setSession(merged);
             setMessages((msgPrev) => {
+            if (envelope.action === "show_checkout_form") {
+                const fp = payload as unknown as {
+                  checkout_info?: import("../types").CheckoutInfo;
+                  delivery_info?: DeliveryInfo;
+                  cart?: import("../types").CartItem[];
+                  ready?: boolean;
+                };
+                const formData = {
+                  checkout_info: fp.checkout_info,
+                  delivery_info: fp.delivery_info,
+                  cart: fp.cart,
+                  ready: fp.ready,
+                };
+                const delivery = fp.delivery_info;
+                const lastDelivery = findLastDeliveryMessage(msgPrev);
+                const deliveryChanged =
+                  deliveryFingerprint(delivery) !== deliveryFingerprint(lastDelivery?.delivery);
+                const withDelivery =
+                  delivery &&
+                  deliveryChanged &&
+                  (delivery.city || delivery.date)
+                    ? [
+                        ...msgPrev,
+                        {
+                          id: createMessageId(),
+                          role: "assistant" as const,
+                          kind: "delivery" as const,
+                          delivery,
+                        },
+                      ]
+                    : msgPrev;
+                // Refresh the existing form in place (voice hydration) or add one.
+                if (withDelivery.some((m) => m.kind === "checkout_form")) {
+                  return withDelivery.map((m) =>
+                    m.kind === "checkout_form" ? { ...m, checkoutForm: formData } : m,
+                  );
+                }
+                return [
+                  ...withDelivery,
+                  {
+                    id: createMessageId(),
+                    role: "assistant",
+                    kind: "checkout_form",
+                    checkoutForm: formData,
+                  },
+                ];
+              }
               const richMessages = buildRichMessages(
                 envelope.action,
                 payload,

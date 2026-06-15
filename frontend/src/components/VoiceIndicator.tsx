@@ -24,14 +24,14 @@ export function VoiceIndicator({ phase, level, connected, micEnabled }: VoiceInd
 
   const ringColor =
     phase === "speaking"
-      ? "bg-emerald-400/80"
+      ? "bg-[#FBD614]"
       : phase === "processing"
-        ? "bg-amber-400/80"
+        ? "bg-[#FBD614]/70"
         : phase === "listening"
-          ? "bg-sky-400/80"
+          ? "bg-[#402970]"
           : connected && micEnabled
-            ? "bg-slate-500/60"
-            : "bg-slate-600/40";
+            ? "bg-[#402970]/50"
+            : "bg-[#402970]/25";
 
   const subtitle =
     phase === "processing"
@@ -39,31 +39,31 @@ export function VoiceIndicator({ phase, level, connected, micEnabled }: VoiceInd
       : connected && micEnabled
         ? "Speak in English, Sinhala, Tamil, or Tanglish — machan, cake ekak, flowers, hampers…"
         : connected
-          ? "Type below or tap Enable mic to speak with Kapru."
+          ? "Type below or tap the mic to speak with Kapru."
           : "Connect to meet Kapru, your Kapruka gift assistant.";
 
   return (
     <div className="flex flex-col items-center gap-4">
       <div className="relative flex h-28 w-28 items-center justify-center">
         <span
-          className={`absolute inset-0 rounded-full ${ringColor} opacity-30 blur-lg transition-transform duration-100 ${
+          className={`absolute inset-0 rounded-full ${ringColor} opacity-25 blur-lg transition-transform duration-100 ${
             phase === "processing" ? "animate-pulse" : ""
           }`}
           style={{ transform: `scale(${pulseScale})` }}
         />
         <span
-          className={`absolute inset-3 rounded-full border-2 border-white/20 ${ringColor} transition-transform duration-100 ${
-            phase === "listening" ? "animate-pulse" : phase === "processing" ? "animate-pulse" : ""
+          className={`absolute inset-3 rounded-full border-2 border-[#402970]/15 ${ringColor} opacity-60 transition-transform duration-100 ${
+            phase === "listening" || phase === "processing" ? "animate-pulse" : ""
           }`}
           style={{ transform: `scale(${Math.min(pulseScale, 1.15)})` }}
         />
-        <span className="relative z-10 text-center text-[10px] font-bold uppercase tracking-widest text-white/90">
+        <span className="relative z-10 text-center text-[10px] font-bold uppercase tracking-widest text-[#402970]">
           {label}
         </span>
       </div>
-      <p className="max-w-md text-center text-sm leading-relaxed text-slate-400">{subtitle}</p>
+      <p className="max-w-md text-center text-sm leading-relaxed text-[#494550]">{subtitle}</p>
       {connected && phase === "idle" ? (
-        <p className="text-xs text-emerald-400/80">ආයුබෝවන් · Vanakkam · Welcome</p>
+        <p className="text-xs font-medium text-[#402970]/70">ආයුබෝවන් · Vanakkam · Welcome</p>
       ) : null}
     </div>
   );

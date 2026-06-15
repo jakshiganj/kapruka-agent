@@ -9,6 +9,64 @@ from kapruka_mcp.kapruka_tools import KaprukaMCPError, kapruka_create_order
 
 logger = logging.getLogger(__name__)
 
+MIN_ADDRESS_LEN = 3
+
+
+def _valid_address(address: str) -> bool:
+    cleaned = address.strip()
+    if len(cleaned) < MIN_ADDRESS_LEN:
+        return False
+    return cleaned.lower() not in {"address tbd", "tbd", "n/a"}
+
+
+def _checkout_form_ready(checkout_info: dict[str, Any]) -> bool:
+    recipient = checkout_info.get("recipient") or {}
+    sender = checkout_info.get("sender") or {}
+    return bool(
+        recipient.get("name")
+        and recipient.get("phone")
+        and _valid_address(str(recipient.get("address") or ""))
+        and sender.get("name")
+    )
+
+
+def _checkout_form_ui(
+    *,
+    cart: list[dict[str, Any]],
+    delivery_info: dict[str, Any],
+    checkout_info: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "action": "show_checkout_form",
+        "payload": {
+            "checkout_info": checkout_info,
+            "delivery_info": delivery_info,
+            "cart": cart,
+            "ready": _checkout_form_ready(checkout_info),
+        },
+    }
+
+
+def _checkout_error_response(
+    *,
+    cart: list[dict[str, Any]],
+    delivery_info: dict[str, Any],
+    checkout_info: dict[str, Any],
+    voice_prompt: str,
+) -> dict[str, Any]:
+    return {
+        "checkout_confirmed": False,
+        "delivery_info": delivery_info,
+        "checkout_info": checkout_info,
+        "voice_prompt": voice_prompt,
+        "next_node": "end",
+        "ui_action": _checkout_form_ui(
+            cart=cart,
+            delivery_info=delivery_info,
+            checkout_info=checkout_info,
+        ),
+    }
+
 
 def _is_delivery_network_error(message: str) -> bool:
     lower = message.lower()
@@ -55,14 +113,16 @@ def checkout_node(state: AgentState) -> dict[str, Any]:
         }
 
     address = str(recipient.get("address") or delivery_info.get("address") or "").strip()
-    if not address or address.lower() in {"address tbd", "tbd", "n/a"}:
-        return {
-            "voice_prompt": (
-                "I still need the recipient's street address for delivery before I can "
-                "create the Kapruka payment link."
+    if not _valid_address(address):
+        return _checkout_error_response(
+            cart=cart,
+            delivery_info=delivery_info,
+            checkout_info=checkout_info,
+            voice_prompt=(
+                "I still need the recipient's full street address for delivery "
+                f"(at least {MIN_ADDRESS_LEN} characters) before I can create the Kapruka payment link."
             ),
-            "next_node": "end",
-        }
+        )
 
     delivery = {
         "address": address,
@@ -100,25 +160,15 @@ def checkout_node(state: AgentState) -> dict[str, Any]:
     except KaprukaMCPError as exc:
         message = str(exc).removeprefix("Error:").strip()
         updated_delivery = dict(delivery_info)
-        ui_payload = dict((state.get("ui_action") or {}).get("payload") or {})
         if _is_delivery_network_error(message):
             updated_delivery["validated"] = "false"
             updated_delivery.pop("delivery_rate", None)
-        result: dict[str, Any] = {
-            "delivery_info": updated_delivery,
-            "voice_prompt": f"I couldn't create the Kapruka checkout link. {message}",
-            "next_node": "end",
-        }
-        if _is_delivery_network_error(message):
-            result["ui_action"] = {
-                "action": "update_cart",
-                "payload": {
-                    **ui_payload,
-                    "cart": cart,
-                    "delivery_info": updated_delivery,
-                },
-            }
-        return result
+        return _checkout_error_response(
+            cart=cart,
+            delivery_info=updated_delivery,
+            checkout_info=checkout_info,
+            voice_prompt=f"I couldn't create the Kapruka checkout link. {message}",
+        )
 
     checkout_url = order.get("checkout_url") or order.get("checkoutUrl") or order.get("payment_url")
     if not checkout_url:
@@ -139,6 +189,7 @@ def checkout_node(state: AgentState) -> dict[str, Any]:
     return {
         **mark_link_ready(cart),
         "checkout_result": checkout_result,
+        "checkout_confirmed": False,
         "ui_action": {
             "action": "show_checkout",
             "payload": checkout_result,

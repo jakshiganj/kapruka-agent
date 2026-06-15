@@ -49,7 +49,53 @@ export type UiActionType =
   | "show_categories"
   | "update_cart"
   | "show_checkout"
+  | "show_checkout_form"
+  | "show_order_tracking"
   | null;
+
+export interface CheckoutFormPayload {
+  checkout_info?: CheckoutInfo;
+  delivery_info?: DeliveryInfo;
+  cart?: CartItem[];
+  ready?: boolean;
+}
+
+export interface CheckoutFormData {
+  recipient: { name: string; phone: string; address: string };
+  sender: { name: string };
+  gift_message?: string;
+  city?: string;
+  date?: string;
+}
+
+export interface OrderTrackingEvent {
+  status?: string;
+  label?: string;
+  title?: string;
+  description?: string;
+  note?: string;
+  timestamp?: string;
+  time?: string;
+  date?: string;
+  completed?: boolean;
+}
+
+export interface OrderTracking {
+  status?: string;
+  order_status?: string;
+  recipient?: { name?: string };
+  items?: Array<{ name?: string; quantity?: number }>;
+  events?: OrderTrackingEvent[];
+  history?: OrderTrackingEvent[];
+  progress?: OrderTrackingEvent[];
+  timeline?: OrderTrackingEvent[];
+  [key: string]: unknown;
+}
+
+export interface OrderTrackingPayload {
+  order_number: string;
+  tracking: OrderTracking;
+}
 
 export type OrderPhase = "shopping" | "link_ready" | "branch_pending";
 
@@ -139,9 +185,11 @@ export type ChatMessageKind =
   | "products"
   | "categories"
   | "checkout"
+  | "checkout_form"
   | "delivery"
   | "cart_notice"
-  | "branch_prompt";
+  | "branch_prompt"
+  | "order_tracking";
 
 export type ChatMessageStatus = "streaming" | "final";
 
@@ -156,8 +204,10 @@ export interface ChatMessage {
   searchQuery?: string;
   searchError?: string;
   checkoutPayload?: CheckoutPayload;
+  checkoutForm?: CheckoutFormPayload;
   delivery?: DeliveryInfo;
   cartItemName?: string;
+  orderTracking?: OrderTrackingPayload;
 }
 
 export interface TextEnvelope {

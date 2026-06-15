@@ -1,5 +1,26 @@
 import { motion } from "framer-motion";
+import { useState } from "react";
 import type { Product } from "../types";
+
+function ProductImage({ src, alt }: { src: string; alt: string }) {
+  const [loaded, setLoaded] = useState(false);
+  return (
+    <>
+      {!loaded ? (
+        <div className="absolute inset-0 animate-pulse bg-[#402970]/8" />
+      ) : null}
+      <img
+        src={src}
+        alt={alt}
+        onLoad={() => setLoaded(true)}
+        className={`h-full w-full object-cover transition-opacity duration-300 ${
+          loaded ? "opacity-100" : "opacity-0"
+        }`}
+        loading="lazy"
+      />
+    </>
+  );
+}
 
 interface ProductCarouselProps {
   products: Product[];
@@ -7,6 +28,7 @@ interface ProductCarouselProps {
   selectedId?: string;
   error?: string;
   onSelect?: (product: Product) => void;
+  onViewDetails?: (product: Product) => void;
   inline?: boolean;
 }
 
@@ -25,6 +47,7 @@ export function ProductCarousel({
   selectedId,
   error,
   onSelect,
+  onViewDetails,
   inline = false,
 }: ProductCarouselProps) {
   if (error) {
@@ -122,12 +145,7 @@ export function ProductCarousel({
             >
               <div className="relative aspect-[4/3] bg-[#f0eded]">
                 {product.image_url ? (
-                  <img
-                    src={product.image_url}
-                    alt={product.name}
-                    className="h-full w-full object-cover"
-                    loading="lazy"
-                  />
+                  <ProductImage src={product.image_url} alt={product.name} />
                 ) : (
                   <div className="flex h-full items-center justify-center text-4xl">🎂</div>
                 )}
@@ -148,17 +166,31 @@ export function ProductCarousel({
                   <p className="line-clamp-2 text-xs leading-relaxed text-[#494550]">{product.summary}</p>
                 ) : null}
                 <p className="text-base font-bold text-[#402970]">{formatPrice(product)}</p>
-                {product.url ? (
-                  <a
-                    href={product.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    className="inline-block text-xs text-[#402970]/80 hover:text-[#402970]"
-                  >
-                    View on Kapruka →
-                  </a>
-                ) : null}
+                <div className="flex items-center gap-3 pt-0.5">
+                  {onViewDetails ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onViewDetails(product);
+                      }}
+                      className="text-xs font-medium text-[#402970] underline-offset-2 hover:underline"
+                    >
+                      Details
+                    </button>
+                  ) : null}
+                  {product.url ? (
+                    <a
+                      href={product.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-xs text-[#402970]/80 hover:text-[#402970]"
+                    >
+                      View on Kapruka →
+                    </a>
+                  ) : null}
+                </div>
               </div>
             </motion.article>
           );

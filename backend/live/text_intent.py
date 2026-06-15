@@ -13,11 +13,47 @@ from langchain_core.messages import HumanMessage
 from graph.graph import build_graph
 from graph.ui_envelope import enrich_ui_payload
 from kapruka_mcp.kapruka_tools import KaprukaMCPError, get_mcp_stats
+from live import session_store
 from live.connection_pool import update_agent_state
+
+try:  # LangGraph wraps a cancelled node call in this error on timeout.
+    from langgraph.errors import NodeCancelledError
+except Exception:  # pragma: no cover - fallback if the symbol moves
+    class NodeCancelledError(Exception):
+        ...
 
 logger = logging.getLogger(__name__)
 
-HANDOFF_TIMEOUT_SECONDS = 35.0
+HANDOFF_TIMEOUT_SECONDS = 45.0
+
+
+def _timeout_reply(prior_agent_state: dict[str, Any]) -> tuple[None, str, dict[str, Any]]:
+    """Message for a graph timeout — advise waiting when Kapruka is rate-limiting."""
+    stats = get_mcp_stats()
+    if stats.get("rate_limit_errors", 0) > 0:
+        return None, (
+            "Kapruka is busy and rate-limiting requests right now. "
+            "Your cart is safe — please wait about a minute, then try again."
+        ), prior_agent_state
+    in_flight = stats.get("in_flight") or []
+    if in_flight or stats.get("network_calls", 0) == 0:
+        return None, (
+            "The request timed out before Kapruka finished responding "
+            "(often after a server reload or a slow connection). "
+            "Your cart is safe — wait a few seconds and try again."
+        ), prior_agent_state
+    return None, (
+        "The Kapruka search took too long to finish. "
+        "This is usually a timeout, not your fault — please try once more in a few seconds."
+    ), prior_agent_state
+
+
+def _is_timeout_cancellation(exc: BaseException) -> bool:
+    """True when an exception is a graph cancellation caused by our wait_for timeout."""
+    if isinstance(exc, NodeCancelledError):
+        return True
+    cause = getattr(exc, "__cause__", None)
+    return isinstance(cause, asyncio.CancelledError)
 
 _graph = None
 
@@ -70,16 +106,16 @@ async def invoke_graph_intent(
     except asyncio.TimeoutError:
         stats = get_mcp_stats()
         logger.warning(
-            "Graph intent timed out for session %s after %.0fs (MCP network=%s rate_limits=%s)",
+            "Graph intent timed out for session %s after %.0fs (MCP network=%s rate_limits=%s in_flight=%s)",
             session_id,
             HANDOFF_TIMEOUT_SECONDS,
             stats["network_calls"],
             stats["rate_limit_errors"],
+            stats.get("in_flight"),
         )
-        return None, (
-            "The Kapruka search took too long to finish. "
-            "This is usually a timeout, not your fault — please try once more in a few seconds."
-        ), prior_agent_state
+        # If Kapruka has been rate-limiting us, retrying immediately only makes it
+        # worse — tell the user to pause instead of hammering checkout again.
+        return _timeout_reply(prior_agent_state)
     except KaprukaMCPError as exc:
         message = str(exc).removeprefix("Error:").strip()
         if "rate limit" in message.lower():
@@ -88,7 +124,15 @@ async def invoke_graph_intent(
                 "Please wait about a minute before searching again."
             ), prior_agent_state
         return None, f"Kapruka returned an error: {message}", prior_agent_state
-    except Exception:
+    except Exception as exc:
+        # On timeout, wait_for cancels the running node; LangGraph re-raises that
+        # as NodeCancelledError, which would otherwise look like a hard crash.
+        if _is_timeout_cancellation(exc):
+            logger.warning(
+                "Graph intent cancelled by timeout for session %s (likely slow/rate-limited MCP)",
+                session_id,
+            )
+            return _timeout_reply(prior_agent_state)
         logger.exception("Graph intent failed for session %s", session_id)
         return None, (
             "Sorry, I had trouble reaching Kapruka just now. "
@@ -96,6 +140,7 @@ async def invoke_graph_intent(
         ), prior_agent_state
 
     update_agent_state(session_id, result)
+    await session_store.save_agent_state(session_id, result)
     voice_prompt = result.get("voice_prompt") or "Done."
     return result, voice_prompt, prior_agent_state
 

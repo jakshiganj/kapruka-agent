@@ -7,9 +7,10 @@ export interface CategorySuggestion {
 }
 
 export const DEFAULT_CATEGORIES: CategorySuggestion[] = [
-  { emoji: "🎂", title: "Cakes & treats", hint: "Chocolate cake to Kadawatha" },
-  { emoji: "💐", title: "Flowers & hampers", hint: "Also add flowers to cart" },
-  { emoji: "🎁", title: "Gift messages", hint: "Wish amma a happy birthday" },
+  { emoji: "🎂", title: "Cakes & treats", hint: "Machan, chocolate cake ekak ඕනේ" },
+  { emoji: "💐", title: "Flowers", hint: "Birthday flowers for amma" },
+  { emoji: "🎁", title: "Gift under 5000", hint: "Show me gifts under Rs. 5,000" },
+  { emoji: "📦", title: "Track my order", hint: "Track my order" },
 ];
 
 interface CategoryChipsProps {
@@ -35,7 +36,7 @@ export function CategoryChips({
       }}
       className={
         layout === "grid"
-          ? "grid w-full max-w-lg gap-3 sm:grid-cols-3"
+          ? "grid w-full max-w-lg gap-3 sm:grid-cols-2"
           : "flex flex-wrap justify-center gap-2"
       }
     >

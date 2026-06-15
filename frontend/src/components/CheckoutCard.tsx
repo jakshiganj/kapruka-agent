@@ -146,6 +146,13 @@ export function CheckoutCard({
         ) : (
           <p className="text-sm text-[#6f5d00]">Checkout link not available yet.</p>
         )}
+
+        <p className="text-[11px] leading-relaxed text-[#494550]/70">
+          After paying, your Kapruka order number arrives by email. Say
+          {" "}
+          <span className="font-medium text-[#402970]">&ldquo;track my order&rdquo;</span>
+          {" "}with that number any time to see delivery progress.
+        </p>
       </div>
     </section>
   );

@@ -1,13 +1,20 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Translator } from "../i18n";
 import type { ChatMessage, VoicePhase } from "../types";
+import { CategoryChips } from "./CategoryChips";
 import { CategoryPicker } from "./CategoryPicker";
 import { CheckoutCard } from "./CheckoutCard";
+import { CheckoutForm } from "./CheckoutForm";
 import { DeliveryBanner } from "./DeliveryBanner";
+import { DeliveryEstimator } from "./DeliveryEstimator";
 import { MicButton } from "./MicButton";
+import { OrderTrackingCard } from "./OrderTrackingCard";
 import { ProductCarousel } from "./ProductCarousel";
+import { VoiceIndicator } from "./VoiceIndicator";
 
 interface ChatPanelProps {
+  t: Translator;
   messages: ChatMessage[];
   connected: boolean;
   processing: boolean;
@@ -21,10 +28,12 @@ interface ChatPanelProps {
   connecting?: boolean;
   selectedProductId?: string;
   onSelectProduct?: (product: import("../types").Product) => void;
+  onViewProduct?: (product: import("../types").Product) => void;
   onOpenCart?: () => void;
   checkoutStale?: boolean;
   onRequestNewLink?: () => void;
   onSelectCategory?: (category: string, subcategory?: string) => void;
+  onSubmitCheckout?: (data: import("../types").CheckoutFormData) => void;
 }
 
 function linkifyContent(content: string, isUser: boolean) {
@@ -65,7 +74,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       className={`flex ${isUser ? "justify-end" : "justify-start"}`}
     >
       <div
-        className={`max-w-[85%] px-4 py-3 text-sm leading-relaxed md:text-base ${
+        className={`max-w-[85%] px-4 py-3 text-sm leading-relaxed md:max-w-[42rem] md:text-base ${
           isUser
             ? `rounded-2xl rounded-br-sm bg-[#F0EEFA] text-[#222222] ${
                 isStreaming ? "border border-dashed border-[#402970]/25 opacity-90" : ""
@@ -87,20 +96,26 @@ function RichMessageBlock({
   message,
   selectedProductId,
   onSelectProduct,
+  onViewProduct,
   onOpenCart,
   checkoutStale,
   onSend,
   onRequestNewLink,
   onSelectCategory,
+  onSubmitCheckout,
+  checkoutSubmitting,
 }: {
   message: ChatMessage;
   selectedProductId?: string;
   onSelectProduct?: (product: import("../types").Product) => void;
+  onViewProduct?: (product: import("../types").Product) => void;
   onOpenCart?: () => void;
   checkoutStale?: boolean;
   onSend?: (text: string) => void;
   onRequestNewLink?: () => void;
   onSelectCategory?: (category: string, subcategory?: string) => void;
+  onSubmitCheckout?: (data: import("../types").CheckoutFormData) => void;
+  checkoutSubmitting?: boolean;
 }) {
   return (
     <motion.div
@@ -118,6 +133,7 @@ function RichMessageBlock({
             selectedId={selectedProductId}
             error={message.searchError}
             onSelect={onSelectProduct}
+            onViewDetails={onViewProduct}
           />
         ) : null}
         {message.kind === "checkout" && message.checkoutPayload ? (
@@ -128,8 +144,18 @@ function RichMessageBlock({
             onRequestNewLink={onRequestNewLink}
           />
         ) : null}
+        {message.kind === "checkout_form" && message.checkoutForm && onSubmitCheckout ? (
+          <CheckoutForm
+            payload={message.checkoutForm}
+            onSubmit={onSubmitCheckout}
+            submitting={checkoutSubmitting}
+          />
+        ) : null}
         {message.kind === "delivery" && message.delivery ? (
           <DeliveryBanner inline delivery={message.delivery} />
+        ) : null}
+        {message.kind === "order_tracking" && message.orderTracking ? (
+          <OrderTrackingCard payload={message.orderTracking} />
         ) : null}
         {message.kind === "categories" ? (
           <CategoryPicker
@@ -185,34 +211,54 @@ function RichMessageBlock({
   );
 }
 
-function renderMessage(
-  message: ChatMessage,
-  selectedProductId?: string,
-  onSelectProduct?: (product: import("../types").Product) => void,
-  onOpenCart?: () => void,
-  checkoutStale?: boolean,
-  onSend?: (text: string) => void,
-  onRequestNewLink?: () => void,
-  onSelectCategory?: (category: string, subcategory?: string) => void,
-) {
+interface RenderMessageOptions {
+  selectedProductId?: string;
+  onSelectProduct?: (product: import("../types").Product) => void;
+  onViewProduct?: (product: import("../types").Product) => void;
+  onOpenCart?: () => void;
+  checkoutStale?: boolean;
+  onSend?: (text: string) => void;
+  onRequestNewLink?: () => void;
+  onSelectCategory?: (category: string, subcategory?: string) => void;
+  onSubmitCheckout?: (data: import("../types").CheckoutFormData) => void;
+  checkoutSubmitting?: boolean;
+}
+
+function renderMessage(message: ChatMessage, options: RenderMessageOptions) {
   if (message.kind === "text") {
     return <MessageBubble message={message} />;
   }
+  const {
+    selectedProductId,
+    onSelectProduct,
+    onViewProduct,
+    onOpenCart,
+    checkoutStale,
+    onSend,
+    onRequestNewLink,
+    onSelectCategory,
+    onSubmitCheckout,
+    checkoutSubmitting,
+  } = options;
   return (
     <RichMessageBlock
       message={message}
       selectedProductId={selectedProductId}
       onSelectProduct={onSelectProduct}
+      onViewProduct={onViewProduct}
       onOpenCart={onOpenCart}
       checkoutStale={checkoutStale}
       onSend={onSend}
       onRequestNewLink={onRequestNewLink}
+      onSubmitCheckout={onSubmitCheckout}
       onSelectCategory={onSelectCategory}
+      checkoutSubmitting={checkoutSubmitting}
     />
   );
 }
 
 export function ChatPanel({
+  t,
   messages,
   connected,
   processing,
@@ -226,21 +272,46 @@ export function ChatPanel({
   connecting = false,
   selectedProductId,
   onSelectProduct,
+  onViewProduct,
   onOpenCart,
   checkoutStale,
   onRequestNewLink,
   onSelectCategory,
+  onSubmitCheckout,
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [atBottom, setAtBottom] = useState(true);
 
   const showEmptyState = messages.length === 0;
+  const lastCheckoutFormId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i]?.kind === "checkout_form") {
+        return messages[i]?.id;
+      }
+    }
+    return undefined;
+  }, [messages]);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const el = scrollRef.current;
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight, behavior });
+    }
+  }, []);
+
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setAtBottom(distanceFromBottom < 80);
+  }, []);
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    if (atBottom) {
+      scrollToBottom();
     }
-  }, [messages, processing]);
+  }, [messages, processing, atBottom, scrollToBottom]);
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
@@ -256,9 +327,10 @@ export function ChatPanel({
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 flex-1 flex-col">
       <div
         ref={scrollRef}
+        onScroll={handleScroll}
         className="scrollbar-thin flex-1 overflow-y-auto px-4 pb-4 md:px-6"
       >
         {showEmptyState ? (
@@ -268,21 +340,37 @@ export function ChatPanel({
             transition={{ duration: 0.5 }}
             className="flex min-h-full flex-col items-center justify-center py-12 text-center"
           >
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              transition={{ delay: 0.1, duration: 0.4 }}
-              className="mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-[#402970] text-2xl font-bold text-white shadow-[0_8px_24px_rgba(64,41,112,0.25)]"
-            >
-              K
-            </motion.div>
+            {connected ? (
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ delay: 0.1, duration: 0.4 }}
+                className="mb-6"
+              >
+                <VoiceIndicator
+                  phase={voicePhase}
+                  level={voiceLevel}
+                  connected={connected}
+                  micEnabled={micActive}
+                />
+              </motion.div>
+            ) : (
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ delay: 0.1, duration: 0.4 }}
+                className="mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-[#402970] text-2xl font-bold text-white shadow-[0_8px_24px_rgba(64,41,112,0.25)]"
+              >
+                K
+              </motion.div>
+            )}
             <motion.h2
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.15 }}
               className="text-xl font-bold tracking-tight text-[#222222] md:text-2xl"
             >
-              {connected ? "Hi, I'm Kapru" : "Welcome to Kapruka"}
+              {connected ? t("welcome.connectedTitle") : t("welcome.disconnectedTitle")}
             </motion.h2>
             <motion.p
               initial={{ opacity: 0, y: 8 }}
@@ -291,19 +379,33 @@ export function ChatPanel({
               className="mt-2 max-w-sm text-sm leading-relaxed text-[#494550] md:text-base"
             >
               {connected
-                ? "Your gift concierge for cakes, flowers, and hampers across Sri Lanka. Type or tap the mic to speak."
-                : "Start a chat to browse gifts with your AI concierge — in English, Sinhala, Tamil, or Tanglish."}
+                ? t("welcome.connectedSubtitle")
+                : t("welcome.disconnectedSubtitle")}
             </motion.p>
-            <motion.p
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.25 }}
-              className="mt-3 text-xs text-[#402970]/70"
-            >
-              ආයුබෝවන් · Vanakkam · Welcome
-            </motion.p>
-
             {!connected ? (
+              <motion.p
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.25 }}
+                className="mt-3 text-xs text-[#402970]/70"
+              >
+                ආයුබෝවන් · Vanakkam · Welcome
+              </motion.p>
+            ) : null}
+
+            {connected ? (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.3 }}
+                className="mt-8 flex w-full justify-center"
+              >
+                <div className="flex flex-col items-center gap-4">
+                  <CategoryChips onSelect={(hint) => onSend(hint)} disabled={processing} />
+                  <DeliveryEstimator />
+                </div>
+              </motion.div>
+            ) : (
               <motion.button
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -315,25 +417,28 @@ export function ChatPanel({
                 whileTap={{ scale: 0.98 }}
                 className="mt-8 rounded-full bg-[#402970] px-8 py-3 text-sm font-semibold text-white shadow-[0_4px_16px_rgba(64,41,112,0.3)] hover:bg-[#2a1059] disabled:opacity-60"
               >
-                {connecting ? "Connecting…" : "Start chatting with Kapru"}
+                {connecting ? t("welcome.connecting") : t("welcome.cta")}
               </motion.button>
-            ) : null}
+            )}
           </motion.div>
         ) : (
-          <div className="mx-auto w-full max-w-[800px] space-y-6 py-6">
+          <div className="mx-auto w-full max-w-5xl space-y-6 py-6">
             <AnimatePresence initial={false}>
               {messages.map((message) => (
                 <div key={message.id}>
-                  {renderMessage(
-                    message,
+                  {renderMessage(message, {
                     selectedProductId,
                     onSelectProduct,
+                    onViewProduct,
                     onOpenCart,
                     checkoutStale,
                     onSend,
                     onRequestNewLink,
                     onSelectCategory,
-                  )}
+                    onSubmitCheckout,
+                    checkoutSubmitting:
+                      processing && message.kind === "checkout_form" && message.id === lastCheckoutFormId,
+                  })}
                 </div>
               ))}
             </AnimatePresence>
@@ -355,7 +460,7 @@ export function ChatPanel({
                       />
                     ))}
                   </span>
-                  Kapru is searching Kapruka…
+                  {t("chat.searching")}
                 </div>
               </motion.div>
             ) : null}
@@ -363,23 +468,58 @@ export function ChatPanel({
         )}
       </div>
 
-      <div className="shrink-0 border-t border-[#402970]/8 bg-white/80 px-4 py-3 backdrop-blur-md md:px-6">
+      <AnimatePresence>
+        {!showEmptyState && !atBottom ? (
+          <motion.button
+            type="button"
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.8 }}
+            onClick={() => scrollToBottom()}
+            aria-label="Scroll to latest"
+            className="absolute bottom-24 left-1/2 z-20 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full bg-[#402970] text-white shadow-[0_4px_16px_rgba(64,41,112,0.3)] hover:bg-[#2a1059]"
+          >
+            <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden>
+              <path
+                d="M12 5v14m0 0l-6-6m6 6l6-6"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </motion.button>
+        ) : null}
+      </AnimatePresence>
+
+      <div
+        className="shrink-0 border-t border-[#402970]/8 bg-white/80 px-4 py-3 backdrop-blur-md md:px-6"
+        style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+      >
         {error ? (
           <p className="mb-2 text-center text-xs text-[#ba1a1a]">{error}</p>
         ) : null}
         <form
           onSubmit={handleSubmit}
-          className="mx-auto flex w-full max-w-[800px] items-end gap-3"
+          className="mx-auto flex w-full max-w-5xl items-end gap-3"
         >
           <div className="min-w-0 flex-1">
             <input
               ref={inputRef}
               type="text"
               disabled={!connected || processing}
-              placeholder={connected ? "Message Kapru…" : "Start chat to type"}
+              placeholder={connected ? t("input.connected") : t("input.disconnected")}
               className="w-full rounded-full border border-[#402970]/12 bg-[#F0EEFA]/50 px-5 py-3.5 text-sm text-[#222222] placeholder:text-[#494550]/50 shadow-inner focus:border-[#402970]/30 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#402970]/10 disabled:opacity-50 md:text-base"
             />
           </div>
+          <button
+            type="submit"
+            disabled={!connected || processing}
+            aria-label={t("input.send")}
+            className="flex h-12 shrink-0 items-center justify-center rounded-full bg-[#402970] px-5 text-sm font-semibold text-white shadow-[0_4px_16px_rgba(64,41,112,0.2)] transition-colors hover:bg-[#2a1059] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {t("input.send")}
+          </button>
           <MicButton
             phase={voicePhase}
             level={voiceLevel}

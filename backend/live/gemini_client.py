@@ -41,6 +41,12 @@ If they want a NEW category ("also add flowers", "I want flowers", "search for h
 search term in intent_text and call send_intent_to_backend again — never assume the old carousel is still
 the active search.
 
+For product searches, intent_text MUST be the bare product keywords only — never a sentence or a
+third-person summary. Say "chocolates", NOT "user wants to look for chocolates". Say "red roses",
+NOT "the customer would like to find red roses". Drop filler like "user wants", "looking for",
+"I'd like", "show me". Keep delivery/checkout intents short too (e.g. "Delivery to Kadawatha on
+2026-06-25").
+
 After something is in the cart, ask whether they'd like more gifts or to proceed to checkout / give delivery details.
 
 After you show products, if the user gives a delivery city and date (same turn or next), you MUST call
@@ -69,9 +75,12 @@ SEND_INTENT_TOOL = types.Tool(
                     "intent_text": types.Schema(
                         type=types.Type.STRING,
                         description=(
-                            "Clear summary: products to search/add, delivery city, date (YYYY-MM-DD), "
-                            "checkout request, recipient name/phone/address, sender name, gift message. "
-                            "Include original language names when given in Sinhala/Tanglish."
+                            "Concise machine intent — NOT a sentence and NOT third person. "
+                            "For searches use bare product keywords only: 'chocolates', 'red roses', "
+                            "'birthday cake' (never 'user wants to look for chocolates'). "
+                            "For other actions: exact product name to add, delivery city + date "
+                            "(YYYY-MM-DD), checkout request, recipient name/phone/address, sender name, "
+                            "gift message. Keep original-language names when given in Sinhala/Tanglish."
                         ),
                     )
                 },
