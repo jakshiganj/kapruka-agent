@@ -251,6 +251,6 @@ export interface SessionSnapshot {
 
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
-export type VoicePhase = "idle" | "listening" | "speaking" | "processing";
+export type VoicePhase = "idle" | "listening" | "speaking" | "processing" | "reconnecting";
 
 export type OrderStep = "discover" | "cart" | "delivery" | "checkout";

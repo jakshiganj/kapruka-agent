@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: kapruka-agent
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false  # You will be prompted to enter this securely in the Render dashboard
+      - key: KAPRUKA_MCP_URL
+        value: https://mcp.kapruka.com/mcp

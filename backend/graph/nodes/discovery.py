@@ -6,6 +6,7 @@ from typing import Any
 from graph.category_catalog import catalog_label
 from graph.category_search import search_category_products
 from graph.state import AgentState
+from graph.voice_i18n import voice_msg
 from graph.product_pick import (
     pick_product_from_text,
     resolve_search_query,
@@ -178,9 +179,11 @@ def discovery_node(state: AgentState) -> dict[str, Any]:
             "Tap the one you like, or tell me which to add."
         )
     else:
-        voice_prompt = (
-            f"I found {len(products)} Kapruka options for '{query}' — they're on your screen now. "
-            "Tap the one you like, or tell me which to add — for example, the second cake or Lavender Love."
+        voice_prompt = voice_msg(
+            "products_found",
+            state,
+            count=len(products),
+            query=query,
         )
 
     payload: dict[str, Any] = {

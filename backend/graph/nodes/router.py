@@ -32,6 +32,7 @@ from graph.order_lifecycle import (
 from graph.categories_api import get_categories
 from graph.date_parse import extract_delivery_city_and_date
 from graph.state import AgentState, RouterDecision
+from graph.voice_i18n import voice_msg
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,7 @@ def _checkout_form_response(
     delivery_info: dict[str, str],
     checkout_info: dict[str, Any],
     *,
+    state: AgentState | None = None,
     voice_prompt: str | None = None,
 ) -> dict[str, Any]:
     """Show/refresh the on-screen checkout form, pre-filled with known details.
@@ -141,13 +143,9 @@ def _checkout_form_response(
     ready = _has_checkout_details(checkout_info)
     if voice_prompt is None:
         voice_prompt = (
-            "I've filled in your checkout details on screen — review them and tap "
-            "Place order to confirm."
+            voice_msg("checkout_form_ready", state)
             if ready
-            else (
-                "I've opened a checkout form on screen. Add the recipient name, phone, "
-                "and address, plus your name as sender, then tap Place order."
-            )
+            else voice_msg("checkout_form_empty", state)
         )
     return {
         "next_node": "end",
@@ -686,10 +684,7 @@ def router_node(state: AgentState) -> dict[str, Any]:
     if _wants_checkout(user_text) and not (state.get("cart") or []):
         return {
             "next_node": "end",
-            "voice_prompt": (
-                "Your cart is empty, so there's nothing to checkout yet. "
-                "Tell me what gift you'd like to send and I'll find some options."
-            ),
+            "voice_prompt": voice_msg("empty_cart_checkout", state),
         }
 
     awaiting_delivery = bool(state.get("awaiting_delivery"))
@@ -908,7 +903,7 @@ def router_node(state: AgentState) -> dict[str, Any]:
     if cart and validated and _should_route_to_checkout(merged_state, user_text, checkout_info):
         logger.info("Router -> checkout form (regex details): %s", checkout_info)
         return _with_branch_updates(
-            _checkout_form_response(cart, delivery_info, checkout_info)
+            _checkout_form_response(cart, delivery_info, checkout_info, state=merged_state)
         )
 
     # Checkout turn: user asked to pay or is providing recipient/sender details.
@@ -931,6 +926,7 @@ def router_node(state: AgentState) -> dict[str, Any]:
                 cart,
                 updates.get("delivery_info", delivery_info),
                 updates.get("checkout_info", checkout_info),
+                state=merged_state,
             )
         )
 

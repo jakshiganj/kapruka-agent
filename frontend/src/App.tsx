@@ -131,14 +131,53 @@ export default function App() {
   const cart = session.cart;
   const selectedId = selectedProductId ?? session.selected_product?.id;
 
+  const reconnectAttemptsRef = useRef(0);
+
+  useEffect(() => {
+    if (live.connectionState === "connected") {
+      reconnectAttemptsRef.current = 0;
+      if (audio.voicePhase === "reconnecting") {
+        audio.setVoicePhase("idle");
+      }
+      return;
+    }
+    if (
+      live.connectionState === "disconnected" &&
+      !intentionalDisconnect &&
+      live.messages.length > 0 &&
+      reconnectAttemptsRef.current < 6
+    ) {
+      const delay = Math.min(1500 * (reconnectAttemptsRef.current + 1), 8000);
+      const timer = window.setTimeout(() => {
+        reconnectAttemptsRef.current += 1;
+        live.connect();
+      }, delay);
+      return () => window.clearTimeout(timer);
+    }
+  }, [live.connectionState, intentionalDisconnect, live.messages.length, live.connect, audio]);
+
+  useEffect(() => {
+    if (live.connectionState === "connecting" && live.messages.length > 0) {
+      audio.setVoicePhase("reconnecting");
+    }
+  }, [live.connectionState, live.messages.length, audio]);
+
+  useEffect(() => {
+    if (live.connectionState === "connected" && micActiveRef.current && !live.liveReady) {
+      pendingMicRef.current = true;
+      live.sendVoiceControl("voice_start");
+    }
+  }, [live.connectionState, live.liveReady, live]);
+
   const handleSelectProduct = useCallback((product: Product) => {
     setSelectedProductId(product.id);
+    live.optimisticAddProduct(product);
     sendControlRef.current({
       type: "select_product",
       product_id: product.id,
       product,
     });
-  }, []);
+  }, [live]);
 
   const handleViewProduct = useCallback((product: Product) => {
     setDetailProduct(product);
@@ -250,17 +289,23 @@ export default function App() {
         </div>
       ) : null}
 
-      {showReconnect ? (
+      {showReconnect || (live.connectionState === "connecting" && live.messages.length > 0) ? (
         <div className="border-b border-[#6f5d00]/20 bg-[#fff8e0] px-4 py-2 md:px-6">
           <div className="mx-auto flex max-w-5xl items-center justify-between gap-3">
-            <p className="text-sm text-[#6f5d00]">Connection lost. Your cart is safe.</p>
-            <button
-              type="button"
-              onClick={handleConnect}
-              className="shrink-0 rounded-full bg-[#402970] px-4 py-1.5 text-xs font-semibold text-white hover:bg-[#2a1059]"
-            >
-              Reconnect
-            </button>
+            <p className="text-sm text-[#6f5d00]">
+              {live.connectionState === "connecting"
+                ? "Reconnecting… your cart is safe."
+                : "Connection lost. Your cart is safe."}
+            </p>
+            {live.connectionState !== "connecting" ? (
+              <button
+                type="button"
+                onClick={handleConnect}
+                className="shrink-0 rounded-full bg-[#402970] px-4 py-1.5 text-xs font-semibold text-white hover:bg-[#2a1059]"
+              >
+                Reconnect
+              </button>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -286,6 +331,7 @@ export default function App() {
         onRequestNewLink={handleRequestNewLink}
         onSelectCategory={handleSelectCategory}
         onSubmitCheckout={connected ? handleSubmitCheckout : undefined}
+        pendingAddId={live.pendingAddId}
       />
 
       <CartDrawer

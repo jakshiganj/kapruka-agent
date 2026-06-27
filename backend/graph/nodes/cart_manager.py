@@ -5,6 +5,7 @@ from typing import Any
 from graph.order_lifecycle import checkout_link_ready, invalidate_checkout
 from graph.state import AgentState
 from graph.product_pick import pick_product_from_text
+from graph.voice_i18n import voice_msg
 from kapruka_mcp.kapruka_tools import extract_price_amount, is_perishable_product
 
 
@@ -29,10 +30,7 @@ def cart_manager_node(state: AgentState) -> dict[str, Any]:
             selected = picked
     if not selected:
         return {
-            "voice_prompt": (
-                "Which gift would you like? Tap one on screen or tell me the name — "
-                "for example, the Lavender Love cake."
-            ),
+            "voice_prompt": voice_msg("pick_product", state),
             "next_node": "end",
         }
 
@@ -76,6 +74,7 @@ def cart_manager_node(state: AgentState) -> dict[str, Any]:
             },
         },
         "voice_prompt": _after_add_prompt(
+            state,
             selected.get("name", "item"),
             delivery_info,
             had_checkout_link=had_checkout_link,
@@ -88,6 +87,7 @@ def cart_manager_node(state: AgentState) -> dict[str, Any]:
 
 
 def _after_add_prompt(
+    state: AgentState,
     name: str,
     delivery_info: dict[str, Any],
     *,
@@ -105,8 +105,5 @@ def _after_add_prompt(
             "say checkout when you're ready and I'll generate a fresh payment link."
         )
     if delivery_info.get("city") and delivery_info.get("date"):
-        return f"Added {name} to your cart. I'll check delivery to {delivery_info['city']} next."
-    return (
-        f"Added {name} to your cart — tap the cart icon to review. "
-        "Would you like to browse more gifts, or shall we proceed to checkout?"
-    )
+        return voice_msg("added_revalidate", state, name=name, city=delivery_info["city"])
+    return voice_msg("added_simple", state, name=name)

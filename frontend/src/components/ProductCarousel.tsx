@@ -26,6 +26,7 @@ interface ProductCarouselProps {
   products: Product[];
   searchQuery?: string;
   selectedId?: string;
+  pendingId?: string;
   error?: string;
   onSelect?: (product: Product) => void;
   onViewDetails?: (product: Product) => void;
@@ -45,6 +46,7 @@ export function ProductCarousel({
   products,
   searchQuery,
   selectedId,
+  pendingId,
   error,
   onSelect,
   onViewDetails,
@@ -116,6 +118,7 @@ export function ProductCarousel({
       <div className="flex gap-3 overflow-x-auto pb-1 snap-x snap-mandatory scrollbar-thin">
         {products.map((product, index) => {
           const selected = product.id === selectedId;
+          const pending = product.id === pendingId;
           return (
             <motion.article
               key={product.id}
@@ -149,7 +152,11 @@ export function ProductCarousel({
                 ) : (
                   <div className="flex h-full items-center justify-center text-4xl">🎂</div>
                 )}
-                {selected ? (
+                {pending ? (
+                  <span className="absolute left-3 top-3 rounded-full bg-[#402970] px-2 py-0.5 text-[10px] font-bold text-white">
+                    Adding…
+                  </span>
+                ) : selected ? (
                   <span className="absolute left-3 top-3 rounded-full bg-[#FBD614] px-2 py-0.5 text-[10px] font-bold text-[#222222]">
                     Selected
                   </span>

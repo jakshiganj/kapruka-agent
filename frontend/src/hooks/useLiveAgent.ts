@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { enrichCategories, getCategoryLabel } from "../data/categoryCatalog";
 import type {
+  CartItem,
   ChatMessage,
   ChatRole,
   CheckoutPayload,
@@ -15,6 +16,22 @@ import type {
   UiPayload,
   UiState,
 } from "../types";
+
+function isPerishableProduct(productId: string): boolean {
+  const upper = productId.toUpperCase();
+  return upper.startsWith("CAKE") || upper.startsWith("FLOWER") || upper.startsWith("COMBO");
+}
+
+function productToCartLine(product: Product): CartItem {
+  return {
+    product_id: product.id,
+    quantity: 1,
+    perishable_flag: isPerishableProduct(product.id),
+    price: product.price?.amount ?? 0,
+    name: product.name,
+    image_url: product.image_url,
+  };
+}
 
 function wsBaseUrl(): string {
   const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
@@ -399,6 +416,8 @@ export interface UseLiveAgentResult {
   sendTextMessage: (text: string) => void;
   sendSelectCategory: (category: string, subcategory?: string) => void;
   sendVoiceControl: (action: "voice_start" | "voice_stop") => void;
+  optimisticAddProduct: (product: Product) => void;
+  pendingAddId: string | null;
 }
 
 export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
@@ -419,6 +438,7 @@ export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
   const [liveReady, setLiveReady] = useState(false);
   const [categoriesLoading, setCategoriesLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingAddId, setPendingAddId] = useState<string | null>(null);
 
   useEffect(() => {
     sessionRef.current = session;
@@ -559,6 +579,23 @@ export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
     [appendUserText, sendControl],
   );
 
+  const optimisticAddProduct = useCallback((product: Product) => {
+    setPendingAddId(product.id);
+    setSession((prev) => {
+      const existing = prev.cart.find((item) => item.product_id === product.id);
+      const cart = existing
+        ? prev.cart.map((item) =>
+            item.product_id === product.id
+              ? { ...item, quantity: item.quantity + 1 }
+              : item,
+          )
+        : [...prev.cart, productToCartLine(product)];
+      const next = { ...prev, cart, selected_product: product };
+      sessionRef.current = next;
+      return next;
+    });
+  }, []);
+
   const loadCategories = useCallback(async () => {
     setCategoriesLoading(true);
     try {
@@ -623,6 +660,9 @@ export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
             sessionRef.current = merged;
             setUiState({ action: envelope.action, payload });
             setSession(merged);
+            if (envelope.action === "update_cart" || envelope.action === "show_checkout") {
+              setPendingAddId(null);
+            }
             setMessages((msgPrev) => {
             if (envelope.action === "show_checkout_form") {
                 const fp = payload as unknown as {
@@ -711,6 +751,7 @@ export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
               setError(envelope.message);
             }
           } else if (envelope.action === "error" && envelope.message) {
+            setPendingAddId(null);
             setError(envelope.message);
             setConnectionState("error");
           }
@@ -757,5 +798,7 @@ export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
     sendTextMessage,
     sendSelectCategory,
     sendVoiceControl,
+    optimisticAddProduct,
+    pendingAddId,
   };
 }

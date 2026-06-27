@@ -5,12 +5,21 @@ interface VoiceIndicatorProps {
   level: number;
   connected: boolean;
   micEnabled: boolean;
+  reconnecting?: boolean;
 }
 
-export function VoiceIndicator({ phase, level, connected, micEnabled }: VoiceIndicatorProps) {
+export function VoiceIndicator({
+  phase,
+  level,
+  connected,
+  micEnabled,
+  reconnecting = false,
+}: VoiceIndicatorProps) {
   const pulseScale = phase === "processing" ? 1.1 : 1 + Math.min(level * 8, 0.6);
   const label =
-    phase === "speaking"
+    reconnecting
+      ? "Reconnecting"
+      : phase === "speaking"
       ? "Kapru speaking"
       : phase === "processing"
         ? "Searching Kapruka"
@@ -23,7 +32,9 @@ export function VoiceIndicator({ phase, level, connected, micEnabled }: VoiceInd
               : "Offline";
 
   const ringColor =
-    phase === "speaking"
+    reconnecting
+      ? "bg-[#FBD614]/60"
+      : phase === "speaking"
       ? "bg-[#FBD614]"
       : phase === "processing"
         ? "bg-[#FBD614]/70"
@@ -34,7 +45,9 @@ export function VoiceIndicator({ phase, level, connected, micEnabled }: VoiceInd
             : "bg-[#402970]/25";
 
   const subtitle =
-    phase === "processing"
+    reconnecting
+      ? "Restoring your session — your cart and checkout details are safe."
+      : phase === "processing"
       ? "Finding gifts and checking delivery across Sri Lanka…"
       : connected && micEnabled
         ? "Speak in English, Sinhala, Tamil, or Tanglish — machan, cake ekak, flowers, hampers…"
@@ -47,13 +60,13 @@ export function VoiceIndicator({ phase, level, connected, micEnabled }: VoiceInd
       <div className="relative flex h-28 w-28 items-center justify-center">
         <span
           className={`absolute inset-0 rounded-full ${ringColor} opacity-25 blur-lg transition-transform duration-100 ${
-            phase === "processing" ? "animate-pulse" : ""
+            phase === "processing" || reconnecting ? "animate-pulse" : ""
           }`}
           style={{ transform: `scale(${pulseScale})` }}
         />
         <span
           className={`absolute inset-3 rounded-full border-2 border-[#402970]/15 ${ringColor} opacity-60 transition-transform duration-100 ${
-            phase === "listening" || phase === "processing" ? "animate-pulse" : ""
+            phase === "listening" || phase === "processing" || reconnecting ? "animate-pulse" : ""
           }`}
           style={{ transform: `scale(${Math.min(pulseScale, 1.15)})` }}
         />

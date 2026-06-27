@@ -34,6 +34,7 @@ interface ChatPanelProps {
   onRequestNewLink?: () => void;
   onSelectCategory?: (category: string, subcategory?: string) => void;
   onSubmitCheckout?: (data: import("../types").CheckoutFormData) => void;
+  pendingAddId?: string | null;
 }
 
 function linkifyContent(content: string, isUser: boolean) {
@@ -104,6 +105,7 @@ function RichMessageBlock({
   onSelectCategory,
   onSubmitCheckout,
   checkoutSubmitting,
+  pendingAddId,
 }: {
   message: ChatMessage;
   selectedProductId?: string;
@@ -116,6 +118,7 @@ function RichMessageBlock({
   onSelectCategory?: (category: string, subcategory?: string) => void;
   onSubmitCheckout?: (data: import("../types").CheckoutFormData) => void;
   checkoutSubmitting?: boolean;
+  pendingAddId?: string | null;
 }) {
   return (
     <motion.div
@@ -131,6 +134,7 @@ function RichMessageBlock({
             products={message.products ?? []}
             searchQuery={message.searchQuery}
             selectedId={selectedProductId}
+            pendingId={pendingAddId ?? undefined}
             error={message.searchError}
             onSelect={onSelectProduct}
             onViewDetails={onViewProduct}
@@ -222,6 +226,7 @@ interface RenderMessageOptions {
   onSelectCategory?: (category: string, subcategory?: string) => void;
   onSubmitCheckout?: (data: import("../types").CheckoutFormData) => void;
   checkoutSubmitting?: boolean;
+  pendingAddId?: string | null;
 }
 
 function renderMessage(message: ChatMessage, options: RenderMessageOptions) {
@@ -239,6 +244,7 @@ function renderMessage(message: ChatMessage, options: RenderMessageOptions) {
     onSelectCategory,
     onSubmitCheckout,
     checkoutSubmitting,
+    pendingAddId,
   } = options;
   return (
     <RichMessageBlock
@@ -253,6 +259,7 @@ function renderMessage(message: ChatMessage, options: RenderMessageOptions) {
       onSubmitCheckout={onSubmitCheckout}
       onSelectCategory={onSelectCategory}
       checkoutSubmitting={checkoutSubmitting}
+      pendingAddId={pendingAddId}
     />
   );
 }
@@ -278,6 +285,7 @@ export function ChatPanel({
   onRequestNewLink,
   onSelectCategory,
   onSubmitCheckout,
+  pendingAddId,
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -438,6 +446,7 @@ export function ChatPanel({
                     onSubmitCheckout,
                     checkoutSubmitting:
                       processing && message.kind === "checkout_form" && message.id === lastCheckoutFormId,
+                    pendingAddId,
                   })}
                 </div>
               ))}

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from graph.state import AgentState
+from graph.voice_i18n import voice_msg
 from kapruka_mcp.kapruka_tools import KaprukaMCPError, kapruka_check_delivery, resolve_delivery_city
 
 
@@ -19,7 +20,7 @@ def validation_node(state: AgentState) -> dict[str, Any]:
 
     if not cart:
         return {
-            "voice_prompt": "Your cart is empty. What would you like to order?",
+            "voice_prompt": voice_msg("cart_empty", state),
             "next_node": "discovery",
         }
 
@@ -27,7 +28,7 @@ def validation_node(state: AgentState) -> dict[str, Any]:
     delivery_date = delivery_info.get("date")
     if not city_input or not delivery_date:
         return {
-            "voice_prompt": "Please tell me the delivery city and date.",
+            "voice_prompt": voice_msg("need_delivery", state),
             "next_node": "end",
         }
 
@@ -116,20 +117,18 @@ def validation_node(state: AgentState) -> dict[str, Any]:
     checkout_info = dict(state.get("checkout_info") or {})
     ready = _checkout_form_ready(checkout_info)
 
-    prompt = (
-        f"Good news — delivery to {canonical_city} on {delivery_date} is available "
-        f"for LKR {last_rate} flat rate for your {len(cart)} item cart. "
+    prompt = voice_msg(
+        "delivery_validated",
+        state,
+        city=canonical_city,
+        date=delivery_date,
+        rate=last_rate,
+        count=len(cart),
     )
     if ready:
-        prompt += (
-            "I've filled in your checkout details on screen — review them and tap "
-            "Place order to confirm."
-        )
+        prompt += " " + voice_msg("checkout_form_ready", state)
     else:
-        prompt += (
-            "I've opened the checkout form below — add the recipient name, phone, "
-            "and address, plus your name as sender, then tap Place order."
-        )
+        prompt += " " + voice_msg("checkout_form_empty", state)
     if warnings:
         prompt += f" Note: {' '.join(dict.fromkeys(warnings))}"
 
