@@ -9,3 +9,13 @@ services:
         sync: false  # You will be prompted to enter this securely in the Render dashboard
       - key: KAPRUKA_MCP_URL
         value: https://mcp.kapruka.com/mcp
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: kapruka-redis
+          property: connectionString
+
+  - type: redis
+    name: kapruka-redis
+    plan: free
+    ipAllowList: [] # only allow internal connections within Render

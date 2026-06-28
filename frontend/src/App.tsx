@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence } from "framer-motion";
 import { CartDrawer } from "./components/CartDrawer";
 import { ChatPanel } from "./components/ChatPanel";
 import { LanguageToggle } from "./components/LanguageToggle";
 import { OrderProgress } from "./components/OrderProgress";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ProductDetailSheet } from "./components/ProductDetailSheet";
 import { useAudioSession } from "./hooks/useAudioSession";
 import { useLiveAgent } from "./hooks/useLiveAgent";
@@ -238,43 +240,50 @@ export default function App() {
   }, [live]);
 
   return (
-    <div className="flex h-full flex-col bg-[#fcf9f8]">
+    <div className="flex h-full flex-col">
       <header
-        className="sticky top-0 z-30 border-b border-[#402970]/8 bg-white/90 px-4 py-3 backdrop-blur-md md:px-6"
-        style={{ paddingTop: "max(0.75rem, env(safe-area-inset-top))" }}
+        className="sticky top-0 z-30 border-b border-[#402970]/6 bg-white/85 px-3 py-2 backdrop-blur-xl sm:px-4 sm:py-3 md:px-6"
+        style={{ paddingTop: "max(0.5rem, env(safe-area-inset-top))" }}
       >
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#402970] text-lg font-bold text-white shadow-[0_2px_8px_rgba(64,41,112,0.2)]">
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-2 sm:gap-4">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-[#402970] to-[#5a3d8a] text-sm font-bold text-white shadow-[0_2px_12px_rgba(64,41,112,0.25)] sm:h-10 sm:w-10 sm:text-lg">
               K
             </div>
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#402970]/70">
+              <p className="hidden text-[10px] font-semibold uppercase tracking-[0.2em] text-[#402970]/70 sm:block">
                 {t("header.tagline")}
               </p>
-              <h1 className="text-base font-semibold text-[#222222] md:text-lg">
+              <h1 className="text-sm font-semibold text-[#222222] sm:text-base md:text-lg">
                 {t("header.title")}
               </h1>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
             <LanguageToggle language={language} onChange={handleLanguageChange} />
             {connected ? (
               <button
                 type="button"
                 onClick={() => setCartOpen(true)}
-                className="relative rounded-full border border-[#402970]/12 bg-[#F0EEFA] px-4 py-2 text-sm font-medium text-[#402970] transition-colors hover:bg-[#402970]/8"
+                className="relative flex h-9 items-center justify-center rounded-full border border-[#402970]/12 bg-[#F0EEFA] px-2.5 text-sm font-medium text-[#402970] transition-all hover:bg-[#402970]/8 hover:shadow-sm sm:px-4 sm:py-2"
               >
-                🛒 {t("header.cart")}{itemCount > 0 ? ` · ${itemCount}` : ""}
+                <span className="text-base">🛒</span>
+                <span className="hidden sm:inline">&nbsp;{t("header.cart")}</span>
+                {itemCount > 0 ? (
+                  <span className="ml-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#402970] px-1 text-[10px] font-bold text-white">
+                    {itemCount}
+                  </span>
+                ) : null}
               </button>
             ) : null}
             {connected ? (
               <button
                 type="button"
                 onClick={handleDisconnect}
-                className="rounded-full border border-[#ba1a1a]/20 bg-[#ffdad6]/50 px-4 py-2 text-sm font-medium text-[#ba1a1a] hover:bg-[#ffdad6]"
+                className="flex h-9 items-center justify-center rounded-full border border-[#ba1a1a]/20 bg-[#ffdad6]/50 px-2.5 text-sm font-medium text-[#ba1a1a] transition-colors hover:bg-[#ffdad6] sm:px-4 sm:py-2"
               >
-                {t("header.end")}
+                <span className="sm:hidden">✕</span>
+                <span className="hidden sm:inline">{t("header.end")}</span>
               </button>
             ) : null}
           </div>
@@ -282,7 +291,7 @@ export default function App() {
       </header>
 
       {shoppingStarted ? (
-        <div className="sticky top-[57px] z-20 border-b border-[#402970]/8 bg-[#fcf9f8]/90 px-4 py-2 backdrop-blur-md md:top-[65px] md:px-6">
+        <div className="sticky top-[41px] z-20 border-b border-[#402970]/6 bg-[#fcf9f8]/85 px-3 py-1.5 backdrop-blur-xl sm:top-[49px] sm:px-4 sm:py-2 md:top-[57px] md:px-6">
           <div className="mx-auto flex max-w-5xl justify-center">
             <OrderProgress session={session} action={live.uiState.action} />
           </div>
@@ -290,9 +299,9 @@ export default function App() {
       ) : null}
 
       {showReconnect || (live.connectionState === "connecting" && live.messages.length > 0) ? (
-        <div className="border-b border-[#6f5d00]/20 bg-[#fff8e0] px-4 py-2 md:px-6">
-          <div className="mx-auto flex max-w-5xl items-center justify-between gap-3">
-            <p className="text-sm text-[#6f5d00]">
+        <div className="border-b border-[#6f5d00]/20 bg-[#fff8e0] px-3 py-2 sm:px-4 md:px-6">
+          <div className="mx-auto flex max-w-5xl items-center justify-between gap-2 sm:gap-3">
+            <p className="text-xs text-[#6f5d00] sm:text-sm">
               {live.connectionState === "connecting"
                 ? "Reconnecting… your cart is safe."
                 : "Connection lost. Your cart is safe."}
@@ -301,7 +310,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={handleConnect}
-                className="shrink-0 rounded-full bg-[#402970] px-4 py-1.5 text-xs font-semibold text-white hover:bg-[#2a1059]"
+                className="shrink-0 rounded-full bg-gradient-to-r from-[#402970] to-[#5a3d8a] px-4 py-1.5 text-xs font-semibold text-white shadow-sm transition-all hover:shadow-md"
               >
                 Reconnect
               </button>
@@ -310,6 +319,7 @@ export default function App() {
         </div>
       ) : null}
 
+      <ErrorBoundary>
       <ChatPanel
         t={t}
         messages={live.messages}
@@ -346,14 +356,17 @@ export default function App() {
         onUpdateItem={connected ? handleUpdateCartItem : undefined}
         onProceedCheckout={connected ? handleProceedToCheckout : undefined}
       />
+      </ErrorBoundary>
 
-      {detailProduct ? (
-        <ProductDetailSheet
-          product={detailProduct}
-          onClose={() => setDetailProduct(undefined)}
-          onAddToCart={handleSelectProduct}
-        />
-      ) : null}
+      <AnimatePresence>
+        {detailProduct ? (
+          <ProductDetailSheet
+            product={detailProduct}
+            onClose={() => setDetailProduct(undefined)}
+            onAddToCart={handleSelectProduct}
+          />
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }

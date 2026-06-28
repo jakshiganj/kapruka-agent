@@ -38,7 +38,7 @@ export function OrderProgress({ session, action }: OrderProgressProps) {
   return (
     <nav
       aria-label="Order progress"
-      className="flex flex-wrap items-center justify-center gap-1.5 md:gap-0"
+      className="flex flex-wrap items-center justify-center gap-1 sm:gap-1.5 md:gap-0"
     >
       {STEPS.map((step, index) => {
         const done = index < activeIndex;
@@ -46,7 +46,7 @@ export function OrderProgress({ session, action }: OrderProgressProps) {
         return (
           <div key={step.id} className="flex items-center">
             <div
-              className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+              className={`flex items-center gap-1.5 rounded-full px-2 py-1 text-[10px] font-medium transition-colors sm:gap-2 sm:px-3 sm:py-1.5 sm:text-xs ${
                 current
                   ? "bg-[#402970]/10 text-[#402970] ring-1 ring-[#402970]/25"
                   : done
@@ -55,7 +55,7 @@ export function OrderProgress({ session, action }: OrderProgressProps) {
               }`}
             >
               <span
-                className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+                className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold sm:h-5 sm:w-5 sm:text-[10px] ${
                   done
                     ? "bg-[#402970] text-white"
                     : current

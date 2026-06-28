@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import type { Product } from "../types";
 
@@ -85,7 +85,7 @@ export function ProductDetailSheet({ product, onClose, onAddToCart }: ProductDet
   const productUrl = detail?.url ?? product.url;
 
   return (
-    <AnimatePresence>
+    <>
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -99,7 +99,7 @@ export function ProductDetailSheet({ product, onClose, onAddToCart }: ProductDet
           exit={{ y: 40, opacity: 0 }}
           transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
           onClick={(e) => e.stopPropagation()}
-          className="scrollbar-thin max-h-[88vh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-[#fcf9f8] shadow-2xl sm:rounded-3xl"
+          className="scrollbar-thin max-h-[95vh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-[#fcf9f8] shadow-2xl sm:max-h-[88vh] sm:rounded-3xl"
           style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
           role="dialog"
           aria-label={name}
@@ -116,13 +116,13 @@ export function ProductDetailSheet({ product, onClose, onAddToCart }: ProductDet
               type="button"
               onClick={onClose}
               aria-label="Close"
-              className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/90 text-[#402970] shadow-md hover:bg-white"
+              className="absolute right-3 top-3 flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-[#402970] shadow-lg backdrop-blur-sm transition-all hover:bg-white hover:shadow-xl sm:right-4 sm:top-4 sm:h-9 sm:w-9"
             >
               ✕
             </button>
           </div>
 
-          <div className="space-y-4 p-5">
+          <div className="space-y-4 p-4 sm:p-5">
             {gallery.length > 1 ? (
               <div className="flex gap-2 overflow-x-auto">
                 {gallery.map((img, i) => (
@@ -130,7 +130,7 @@ export function ProductDetailSheet({ product, onClose, onAddToCart }: ProductDet
                     key={`${img}-${i}`}
                     src={img}
                     alt={`${name} ${i + 1}`}
-                    className="h-16 w-16 shrink-0 rounded-lg object-cover"
+                    className="h-14 w-14 shrink-0 rounded-lg object-cover sm:h-16 sm:w-16"
                     loading="lazy"
                   />
                 ))}
@@ -141,7 +141,7 @@ export function ProductDetailSheet({ product, onClose, onAddToCart }: ProductDet
               <h2 className="text-xl font-bold text-[#222222]">{name}</h2>
               <div className="mt-1.5 flex items-center gap-2">
                 {priceText ? (
-                  <span className="text-lg font-bold text-[#402970]">{priceText}</span>
+                  <span className="text-base font-bold text-[#402970] sm:text-lg">{priceText}</span>
                 ) : null}
                 <span
                   className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
@@ -194,7 +194,7 @@ export function ProductDetailSheet({ product, onClose, onAddToCart }: ProductDet
               </p>
             ) : null}
 
-            <div className="flex items-center gap-3 pt-1">
+            <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:items-center sm:gap-3">
               <button
                 type="button"
                 disabled={!inStock}
@@ -202,7 +202,7 @@ export function ProductDetailSheet({ product, onClose, onAddToCart }: ProductDet
                   onAddToCart(product);
                   onClose();
                 }}
-                className="flex-1 rounded-xl bg-[#402970] px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#2a1059] disabled:cursor-not-allowed disabled:opacity-50"
+                className="w-full rounded-xl bg-gradient-to-r from-[#402970] to-[#5a3d8a] px-4 py-3.5 text-sm font-semibold text-white shadow-[0_4px_16px_rgba(64,41,112,0.2)] transition-all hover:shadow-[0_6px_20px_rgba(64,41,112,0.3)] disabled:cursor-not-allowed disabled:opacity-50 sm:flex-1 sm:py-3"
               >
                 Add to cart
               </button>
@@ -211,7 +211,7 @@ export function ProductDetailSheet({ product, onClose, onAddToCart }: ProductDet
                   href={productUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="rounded-xl border border-[#402970]/15 px-4 py-3 text-sm font-medium text-[#402970] hover:bg-[#F0EEFA]"
+                  className="w-full rounded-xl border border-[#402970]/15 px-4 py-3 text-center text-sm font-medium text-[#402970] transition-colors hover:bg-[#F0EEFA] sm:w-auto sm:py-3"
                 >
                   Kapruka →
                 </a>
@@ -220,6 +220,6 @@ export function ProductDetailSheet({ product, onClose, onAddToCart }: ProductDet
           </div>
         </motion.div>
       </motion.div>
-    </AnimatePresence>
+    </>
   );
 }

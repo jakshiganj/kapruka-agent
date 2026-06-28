@@ -52,12 +52,12 @@ export function CategoryChips({
           }}
           whileHover={disabled ? undefined : { scale: 1.02 }}
           whileTap={disabled ? undefined : { scale: 0.98 }}
-          className={`group rounded-2xl border border-[#402970]/15 bg-white px-4 py-4 text-left shadow-[0_2px_12px_rgba(64,41,112,0.06)] transition-colors ${
+          className={`group rounded-2xl border border-[#402970]/12 bg-white px-3.5 py-3.5 text-left shadow-[0_2px_12px_rgba(64,41,112,0.05)] transition-all sm:px-4 sm:py-4 ${
             layout === "row" ? "min-w-[140px] flex-1" : ""
-          } ${disabled ? "cursor-default opacity-70" : "cursor-pointer hover:border-[#402970]/30 hover:bg-[#F0EEFA]/60"}`}
+          } ${disabled ? "cursor-default opacity-70" : "cursor-pointer hover:border-[#402970]/25 hover:bg-[#F0EEFA]/60 hover:shadow-[0_4px_16px_rgba(64,41,112,0.08)] active:scale-[0.98]"}`}
         >
-          <span className="text-2xl">{cat.emoji}</span>
-          <p className="mt-2 text-sm font-semibold text-[#222222]">{cat.title}</p>
+          <span className="text-xl sm:text-2xl">{cat.emoji}</span>
+          <p className="mt-1.5 text-xs font-semibold text-[#222222] sm:mt-2 sm:text-sm">{cat.title}</p>
           <p className="mt-1 text-xs leading-relaxed text-[#222222]/60 group-hover:text-[#222222]/80">
             &ldquo;{cat.hint}&rdquo;
           </p>

@@ -47,7 +47,7 @@ export function OrderTrackingCard({ payload }: OrderTrackingCardProps) {
       transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
       className="w-full overflow-hidden rounded-2xl rounded-bl-sm border border-[#402970]/15 bg-white shadow-[0_4px_16px_rgba(64,41,112,0.1)]"
     >
-      <div className="border-b border-[#402970]/10 bg-[#F0EEFA] px-5 py-3">
+      <div className="border-b border-[#402970]/10 bg-[#F0EEFA] px-4 py-2.5 sm:px-5 sm:py-3">
         <p className="text-[10px] font-semibold uppercase tracking-wider text-[#402970]">
           Order tracking
         </p>
@@ -56,7 +56,7 @@ export function OrderTrackingCard({ payload }: OrderTrackingCardProps) {
         </h2>
       </div>
 
-      <div className="space-y-4 p-5">
+      <div className="space-y-4 p-4 sm:p-5">
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center rounded-full bg-[#402970]/10 px-3 py-1 text-xs font-semibold text-[#402970]">
             {status}

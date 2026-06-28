@@ -6,6 +6,8 @@ import asyncio
 import base64
 import json
 import logging
+import time
+from collections import deque
 from contextlib import suppress
 from typing import Any
 
@@ -21,6 +23,19 @@ from graph.ui_envelope import enrich_ui_payload
 from live.text_intent import TextIntentBusyError, emit_assistant_text, run_text_intent
 
 logger = logging.getLogger(__name__)
+
+WS_CONTROL_MSG_LIMIT = 60
+WS_CONTROL_WINDOW_SEC = 60.0
+
+def _check_rate_limit(pool_session: dict) -> bool:
+    timestamps = pool_session.setdefault("ctrl_timestamps", deque())
+    now = time.monotonic()
+    while timestamps and now - timestamps[0] > WS_CONTROL_WINDOW_SEC:
+        timestamps.popleft()
+    if len(timestamps) >= WS_CONTROL_MSG_LIMIT:
+        return False
+    timestamps.append(now)
+    return True
 
 
 async def _emit_transcription(
@@ -648,6 +663,21 @@ async def handle_stream(websocket: WebSocket, session_id: str) -> None:
                     continue
 
                 ctrl_type = ctrl.get("type")
+
+                if ctrl_type == "ping":
+                    with suppress(Exception):
+                        await websocket.send_json({"type": "pong"})
+                    continue
+
+                if not _check_rate_limit(pool_session):
+                    logger.warning("WebSocket rate limit exceeded for session %s", session_id)
+                    with suppress(Exception):
+                        await websocket.send_json({
+                            "type": "control",
+                            "action": "error",
+                            "message": "You are sending messages too quickly. Please wait a moment."
+                        })
+                    continue
 
                 if ctrl_type == "text_message":
                     user_text = (ctrl.get("text") or "").strip()

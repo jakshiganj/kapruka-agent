@@ -106,11 +106,11 @@ export function CategoryPicker({
 
   return (
     <div
-      className={`w-full rounded-2xl border border-[#402970]/12 bg-white ${
-        compact ? "px-3 py-3" : "px-4 py-4 shadow-[0_2px_12px_rgba(64,41,112,0.06)]"
+      className={`w-full rounded-2xl border border-[#402970]/10 bg-white ${
+        compact ? "px-2.5 py-2.5 sm:px-3 sm:py-3" : "px-3 py-3 shadow-[0_2px_12px_rgba(64,41,112,0.05)] sm:px-4 sm:py-4"
       }`}
     >
-      <div className="mb-3 flex items-center justify-between gap-2">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm font-semibold text-[#222222]">Browse Kapruka</p>
         <input
           type="search"
@@ -118,7 +118,7 @@ export function CategoryPicker({
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Search categories…"
           disabled={disabled || loading}
-          className="w-36 rounded-full border border-[#402970]/12 bg-[#F0EEFA]/60 px-3 py-1.5 text-xs text-[#222222] placeholder:text-[#494550]/50 focus:border-[#402970]/30 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#402970]/10 disabled:opacity-50 sm:w-44"
+          className="w-full rounded-full border border-[#402970]/10 bg-[#F0EEFA]/50 px-3 py-1.5 text-xs text-[#222222] placeholder:text-[#494550]/40 transition-all focus:border-[#402970]/25 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#402970]/10 disabled:opacity-50 sm:w-44"
         />
       </div>
 

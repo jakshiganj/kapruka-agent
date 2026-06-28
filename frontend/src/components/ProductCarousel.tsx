@@ -87,14 +87,14 @@ export function ProductCarousel({
   return (
     <section className="w-full">
       {inline ? (
-        <div className="mb-3 flex items-center justify-between gap-2">
+      <div className="mb-2 flex items-center justify-between gap-2 sm:mb-3">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-[#402970]/70">Kapruka picks</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-[#402970]/70 sm:text-xs">Kapruka picks</p>
             {searchQuery ? (
-              <p className="text-xs text-[#494550]">Results for &ldquo;{searchQuery}&rdquo;</p>
+              <p className="text-[10px] text-[#494550] sm:text-xs">Results for &ldquo;{searchQuery}&rdquo;</p>
             ) : null}
           </div>
-          <span className="rounded-full bg-[#402970]/8 px-2.5 py-0.5 text-[10px] font-medium text-[#402970]">
+          <span className="rounded-full bg-[#402970]/8 px-2 py-0.5 text-[9px] font-medium text-[#402970] sm:px-2.5 sm:text-[10px]">
             {products.length} gifts
           </span>
         </div>
@@ -115,7 +115,8 @@ export function ProductCarousel({
         </div>
       )}
 
-      <div className="flex gap-3 overflow-x-auto pb-1 snap-x snap-mandatory scrollbar-thin">
+      <div className="relative">
+      <div className="scrollbar-hide flex gap-2.5 overflow-x-auto pb-1 snap-x snap-mandatory sm:gap-3 sm:scrollbar-thin">
         {products.map((product, index) => {
           const selected = product.id === selectedId;
           const pending = product.id === pendingId;
@@ -138,13 +139,13 @@ export function ProductCarousel({
                     }
                   : undefined
               }
-              className={`snap-start shrink-0 w-64 overflow-hidden rounded-2xl border transition-transform ${
-                inline ? "shadow-[0_4px_16px_rgba(64,41,112,0.1)]" : "shadow-xl"
+              className={`snap-start shrink-0 w-52 overflow-hidden rounded-2xl border transition-all sm:w-64 ${
+                inline ? "shadow-[0_4px_16px_rgba(64,41,112,0.08)]" : "shadow-xl"
               } ${
                 selected
                   ? "border-[#402970]/40 bg-white ring-2 ring-[#402970]/20"
-                  : "border-[#402970]/10 bg-white"
-              } ${onSelect ? "cursor-pointer hover:scale-[1.02]" : ""}`}
+                  : "border-[#402970]/8 bg-white hover:border-[#402970]/15"
+              } ${onSelect ? "cursor-pointer active:scale-[0.98] sm:hover:scale-[1.02]" : ""}`}
             >
               <div className="relative aspect-[4/3] bg-[#f0eded]">
                 {product.image_url ? (
@@ -153,11 +154,11 @@ export function ProductCarousel({
                   <div className="flex h-full items-center justify-center text-4xl">🎂</div>
                 )}
                 {pending ? (
-                  <span className="absolute left-3 top-3 rounded-full bg-[#402970] px-2 py-0.5 text-[10px] font-bold text-white">
+                  <span className="absolute left-2 top-2 rounded-full bg-gradient-to-r from-[#402970] to-[#5a3d8a] px-2 py-0.5 text-[9px] font-bold text-white sm:left-3 sm:top-3 sm:text-[10px]">
                     Adding…
                   </span>
                 ) : selected ? (
-                  <span className="absolute left-3 top-3 rounded-full bg-[#FBD614] px-2 py-0.5 text-[10px] font-bold text-[#222222]">
+                  <span className="absolute left-2 top-2 rounded-full bg-[#FBD614] px-2 py-0.5 text-[9px] font-bold text-[#222222] shadow-sm sm:left-3 sm:top-3 sm:text-[10px]">
                     Selected
                   </span>
                 ) : null}
@@ -167,13 +168,13 @@ export function ProductCarousel({
                   </span>
                 ) : null}
               </div>
-              <div className="space-y-1.5 p-3">
-                <h3 className="line-clamp-2 text-sm font-medium text-[#222222]">{product.name}</h3>
+              <div className="space-y-1 p-2.5 sm:space-y-1.5 sm:p-3">
+                <h3 className="line-clamp-2 text-xs font-medium text-[#222222] sm:text-sm">{product.name}</h3>
                 {product.summary ? (
-                  <p className="line-clamp-2 text-xs leading-relaxed text-[#494550]">{product.summary}</p>
+                  <p className="line-clamp-2 text-[10px] leading-relaxed text-[#494550] sm:text-xs">{product.summary}</p>
                 ) : null}
-                <p className="text-base font-bold text-[#402970]">{formatPrice(product)}</p>
-                <div className="flex items-center gap-3 pt-0.5">
+                <p className="text-sm font-bold text-[#402970] sm:text-base">{formatPrice(product)}</p>
+                <div className="flex items-center gap-2 pt-0.5 sm:gap-3">
                   {onViewDetails ? (
                     <button
                       type="button"
@@ -202,9 +203,10 @@ export function ProductCarousel({
             </motion.article>
           );
         })}
+        </div>
       </div>
       {inline && onSelect ? (
-        <p className="mt-2 text-[10px] text-[#494550]/70">Tap a gift to add it to your cart</p>
+        <p className="mt-1.5 text-[9px] text-[#494550]/60 sm:mt-2 sm:text-[10px]">Tap a gift to add it to your cart</p>
       ) : null}
     </section>
   );

@@ -52,7 +52,7 @@ function linkifyContent(content: string, isUser: boolean) {
         rel="noreferrer"
         className={`break-all underline underline-offset-2 ${
           isUser ? "decoration-[#402970]/40" : "decoration-white/40"
-        }`}
+        } hover:opacity-80 transition-opacity`}
       >
         {part}
       </a>
@@ -75,12 +75,12 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       className={`flex ${isUser ? "justify-end" : "justify-start"}`}
     >
       <div
-        className={`max-w-[85%] px-4 py-3 text-sm leading-relaxed md:max-w-[42rem] md:text-base ${
+        className={`max-w-[92%] px-3.5 py-2.5 text-[13px] leading-relaxed sm:max-w-[85%] sm:px-4 sm:py-3 sm:text-sm md:max-w-[42rem] md:text-base ${
           isUser
-            ? `rounded-2xl rounded-br-sm bg-[#F0EEFA] text-[#222222] ${
+            ? `rounded-2xl rounded-br-sm bg-[#F0EEFA] text-[#222222] shadow-[0_1px_3px_rgba(64,41,112,0.06)] ${
                 isStreaming ? "border border-dashed border-[#402970]/25 opacity-90" : ""
               }`
-            : `rounded-2xl rounded-bl-sm bg-[#402970] text-white shadow-[0_2px_8px_rgba(64,41,112,0.12)] ${
+            : `rounded-2xl rounded-bl-sm bg-gradient-to-br from-[#402970] to-[#4e3485] text-white shadow-[0_2px_12px_rgba(64,41,112,0.15)] ${
                 isStreaming ? "border border-dashed border-white/25 opacity-90" : ""
               }`
         }`}
@@ -339,14 +339,14 @@ export function ChatPanel({
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="scrollbar-thin flex-1 overflow-y-auto px-4 pb-4 md:px-6"
+        className="scrollbar-hide overscroll-contain flex-1 overflow-y-auto px-3 pb-4 sm:scrollbar-thin sm:px-4 md:px-6"
       >
         {showEmptyState ? (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.5 }}
-            className="flex min-h-full flex-col items-center justify-center py-12 text-center"
+            className="flex min-h-full flex-col items-center justify-center px-4 py-8 text-center sm:py-12"
           >
             {connected ? (
               <motion.div
@@ -367,7 +367,7 @@ export function ChatPanel({
                 initial={{ scale: 0.9, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 transition={{ delay: 0.1, duration: 0.4 }}
-                className="mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-[#402970] text-2xl font-bold text-white shadow-[0_8px_24px_rgba(64,41,112,0.25)]"
+                className="mb-6 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-[#402970] to-[#5a3d8a] text-xl font-bold text-white shadow-[0_8px_24px_rgba(64,41,112,0.25)] sm:h-16 sm:w-16 sm:text-2xl"
               >
                 K
               </motion.div>
@@ -376,7 +376,7 @@ export function ChatPanel({
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.15 }}
-              className="text-xl font-bold tracking-tight text-[#222222] md:text-2xl"
+              className="text-lg font-bold tracking-tight text-[#222222] sm:text-xl md:text-2xl"
             >
               {connected ? t("welcome.connectedTitle") : t("welcome.disconnectedTitle")}
             </motion.h2>
@@ -384,7 +384,7 @@ export function ChatPanel({
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
-              className="mt-2 max-w-sm text-sm leading-relaxed text-[#494550] md:text-base"
+              className="mt-2 max-w-sm text-xs leading-relaxed text-[#494550] sm:text-sm md:text-base"
             >
               {connected
                 ? t("welcome.connectedSubtitle")
@@ -423,17 +423,24 @@ export function ChatPanel({
                 disabled={connecting}
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
-                className="mt-8 rounded-full bg-[#402970] px-8 py-3 text-sm font-semibold text-white shadow-[0_4px_16px_rgba(64,41,112,0.3)] hover:bg-[#2a1059] disabled:opacity-60"
+                className="mt-8 rounded-full bg-gradient-to-r from-[#402970] to-[#5a3d8a] px-8 py-3.5 text-sm font-semibold text-white shadow-[0_4px_20px_rgba(64,41,112,0.3)] transition-all hover:shadow-[0_6px_24px_rgba(64,41,112,0.4)] disabled:opacity-60"
               >
                 {connecting ? t("welcome.connecting") : t("welcome.cta")}
               </motion.button>
             )}
           </motion.div>
         ) : (
-          <div className="mx-auto w-full max-w-5xl space-y-6 py-6">
+          <div className="mx-auto w-full max-w-5xl space-y-4 py-4 sm:space-y-6 sm:py-6">
             <AnimatePresence initial={false}>
               {messages.map((message) => (
-                <div key={message.id}>
+                <motion.div
+                  key={message.id}
+                  layout
+                  initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95, y: -15 }}
+                  transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+                >
                   {renderMessage(message, {
                     selectedProductId,
                     onSelectProduct,
@@ -448,7 +455,7 @@ export function ChatPanel({
                       processing && message.kind === "checkout_form" && message.id === lastCheckoutFormId,
                     pendingAddId,
                   })}
-                </div>
+                </motion.div>
               ))}
             </AnimatePresence>
 
@@ -458,7 +465,7 @@ export function ChatPanel({
                 animate={{ opacity: 1 }}
                 className="flex justify-start"
               >
-                <div className="flex items-center gap-2 rounded-2xl rounded-bl-sm bg-[#402970]/10 px-4 py-3 text-sm text-[#402970]">
+                <div className="flex items-center gap-2 rounded-2xl rounded-bl-sm bg-[#402970]/8 px-3 py-2.5 text-xs text-[#402970] sm:px-4 sm:py-3 sm:text-sm">
                   <span className="flex gap-1">
                     {[0, 1, 2].map((i) => (
                       <motion.span
@@ -486,7 +493,7 @@ export function ChatPanel({
             exit={{ opacity: 0, scale: 0.8 }}
             onClick={() => scrollToBottom()}
             aria-label="Scroll to latest"
-            className="absolute bottom-24 left-1/2 z-20 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full bg-[#402970] text-white shadow-[0_4px_16px_rgba(64,41,112,0.3)] hover:bg-[#2a1059]"
+            className="absolute bottom-24 left-1/2 z-20 flex h-10 w-10 -translate-x-1/2 items-center justify-center rounded-full bg-gradient-to-br from-[#402970] to-[#5a3d8a] text-white shadow-[0_4px_20px_rgba(64,41,112,0.35)] transition-all hover:shadow-[0_6px_24px_rgba(64,41,112,0.45)] sm:h-9 sm:w-9"
           >
             <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden>
               <path
@@ -502,15 +509,15 @@ export function ChatPanel({
       </AnimatePresence>
 
       <div
-        className="shrink-0 border-t border-[#402970]/8 bg-white/80 px-4 py-3 backdrop-blur-md md:px-6"
-        style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+        className="shrink-0 border-t border-[#402970]/6 bg-white/85 px-3 py-2.5 backdrop-blur-xl sm:px-4 sm:py-3 md:px-6"
+        style={{ paddingBottom: "max(0.625rem, env(safe-area-inset-bottom))" }}
       >
         {error ? (
-          <p className="mb-2 text-center text-xs text-[#ba1a1a]">{error}</p>
+          <p className="mb-2 text-center text-[11px] text-[#ba1a1a] sm:text-xs">{error}</p>
         ) : null}
         <form
           onSubmit={handleSubmit}
-          className="mx-auto flex w-full max-w-5xl items-end gap-3"
+          className="mx-auto flex w-full max-w-5xl items-center gap-2 sm:gap-2.5"
         >
           <div className="min-w-0 flex-1">
             <input
@@ -518,16 +525,18 @@ export function ChatPanel({
               type="text"
               disabled={!connected || processing}
               placeholder={connected ? t("input.connected") : t("input.disconnected")}
-              className="w-full rounded-full border border-[#402970]/12 bg-[#F0EEFA]/50 px-5 py-3.5 text-sm text-[#222222] placeholder:text-[#494550]/50 shadow-inner focus:border-[#402970]/30 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#402970]/10 disabled:opacity-50 md:text-base"
+              className="w-full rounded-full border border-[#402970]/10 bg-[#F0EEFA]/40 px-4 py-3 text-sm text-[#222222] placeholder:text-[#494550]/40 shadow-[inset_0_1px_3px_rgba(64,41,112,0.04)] transition-all focus:border-[#402970]/25 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#402970]/10 focus:shadow-[0_0_0_4px_rgba(64,41,112,0.04)] disabled:opacity-50 sm:px-5 sm:py-3.5 md:text-base"
             />
           </div>
           <button
             type="submit"
             disabled={!connected || processing}
             aria-label={t("input.send")}
-            className="flex h-12 shrink-0 items-center justify-center rounded-full bg-[#402970] px-5 text-sm font-semibold text-white shadow-[0_4px_16px_rgba(64,41,112,0.2)] transition-colors hover:bg-[#2a1059] disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-r from-[#402970] to-[#5a3d8a] text-white shadow-[0_2px_8px_rgba(64,41,112,0.2)] transition-all hover:shadow-[0_4px_16px_rgba(64,41,112,0.3)] disabled:cursor-not-allowed disabled:opacity-40 sm:h-12 sm:w-12"
           >
-            {t("input.send")}
+            <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden>
+              <path d="M6 12l6-6 6 6M12 6v14" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </button>
           <MicButton
             phase={voicePhase}
@@ -536,6 +545,7 @@ export function ChatPanel({
             active={micActive}
             disabled={processing}
             onToggle={onMicToggle}
+            compact
           />
         </form>
       </div>

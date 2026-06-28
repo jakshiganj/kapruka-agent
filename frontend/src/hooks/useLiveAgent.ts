@@ -630,9 +630,16 @@ export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
 
+    let pingInterval: number;
+
     ws.onopen = () => {
       setConnectionState("connected");
       onConnectedRef.current?.();
+      pingInterval = window.setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "ping" }));
+        }
+      }, 25000);
     };
 
     ws.onmessage = (event: MessageEvent) => {
@@ -763,11 +770,13 @@ export function useLiveAgent(options: UseLiveAgentOptions): UseLiveAgentResult {
     };
 
     ws.onerror = () => {
+      window.clearInterval(pingInterval);
       setConnectionState("error");
       setError("WebSocket connection failed");
     };
 
     ws.onclose = () => {
+      window.clearInterval(pingInterval);
       wsRef.current = null;
       setConnectionState("disconnected");
       setProcessing(false);

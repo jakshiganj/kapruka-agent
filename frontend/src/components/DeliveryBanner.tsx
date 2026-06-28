@@ -40,7 +40,7 @@ export function DeliveryBanner({ delivery, inline = false }: DeliveryBannerProps
 
   return (
     <section
-      className={`border p-4 ${
+      className={`border p-3 sm:p-4 ${
         inline ? "rounded-2xl rounded-bl-sm" : "rounded-2xl"
       } ${statusStyles}`}
     >

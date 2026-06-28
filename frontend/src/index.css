@@ -6,6 +6,10 @@ body,
   height: 100%;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   margin: 0;
   font-family:
@@ -13,11 +17,34 @@ body {
     system-ui,
     -apple-system,
     sans-serif;
-  background: #fcf9f8;
+  background: linear-gradient(
+    165deg,
+    #fcf9f8 0%,
+    #f8f4fd 40%,
+    #faf7f6 70%,
+    #f5f0fb 100%
+  );
+  background-attachment: fixed;
   color: #222222;
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
 }
 
+/* Focus-visible ring for keyboard navigation */
+*:focus-visible {
+  outline: 2px solid rgba(64, 41, 112, 0.4);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+button:focus:not(:focus-visible),
+a:focus:not(:focus-visible),
+input:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Thin scrollbar for sidebars/panels */
 .scrollbar-thin {
   scrollbar-width: thin;
   scrollbar-color: rgba(64, 41, 112, 0.15) transparent;
@@ -31,4 +58,50 @@ body {
 .scrollbar-thin::-webkit-scrollbar-thumb {
   background: rgba(64, 41, 112, 0.15);
   border-radius: 999px;
+}
+
+/* Hide scrollbar completely — used for mobile carousels & chat */
+.scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Prevent overscroll bounce on iOS for chat area */
+.overscroll-contain {
+  overscroll-behavior: contain;
+}
+
+/* Gradient text utility */
+.text-gradient {
+  background: linear-gradient(135deg, #402970 0%, #6b4ca0 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Carousel scroll fade hint (right edge) */
+.carousel-fade-r::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 40px;
+  background: linear-gradient(to right, transparent, #fcf9f8);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Safe-area utilities */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
 }

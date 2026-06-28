@@ -1,3 +1,4 @@
+import { motion } from "framer-motion";
 import type { VoicePhase } from "../types";
 
 interface VoiceIndicatorProps {
@@ -56,25 +57,27 @@ export function VoiceIndicator({
           : "Connect to meet Kapru, your Kapruka gift assistant.";
 
   return (
-    <div className="flex flex-col items-center gap-4">
-      <div className="relative flex h-28 w-28 items-center justify-center">
-        <span
-          className={`absolute inset-0 rounded-full ${ringColor} opacity-25 blur-lg transition-transform duration-100 ${
+    <div className="flex flex-col items-center gap-3 sm:gap-4">
+      <div className="relative flex h-20 w-20 items-center justify-center sm:h-28 sm:w-28">
+        <motion.span
+          animate={{ scale: pulseScale }}
+          transition={{ type: "tween", ease: "linear", duration: 0.1 }}
+          className={`absolute inset-0 rounded-full ${ringColor} opacity-25 blur-lg ${
             phase === "processing" || reconnecting ? "animate-pulse" : ""
           }`}
-          style={{ transform: `scale(${pulseScale})` }}
         />
-        <span
-          className={`absolute inset-3 rounded-full border-2 border-[#402970]/15 ${ringColor} opacity-60 transition-transform duration-100 ${
+        <motion.span
+          animate={{ scale: Math.min(pulseScale, 1.15) }}
+          transition={{ type: "tween", ease: "linear", duration: 0.1 }}
+          className={`absolute inset-3 rounded-full border-2 border-[#402970]/15 ${ringColor} opacity-60 ${
             phase === "listening" || phase === "processing" || reconnecting ? "animate-pulse" : ""
           }`}
-          style={{ transform: `scale(${Math.min(pulseScale, 1.15)})` }}
         />
         <span className="relative z-10 text-center text-[10px] font-bold uppercase tracking-widest text-[#402970]">
           {label}
         </span>
       </div>
-      <p className="max-w-md text-center text-sm leading-relaxed text-[#494550]">{subtitle}</p>
+      <p className="max-w-xs text-center text-xs leading-relaxed text-[#494550] sm:max-w-md sm:text-sm">{subtitle}</p>
       {connected && phase === "idle" ? (
         <p className="text-xs font-medium text-[#402970]/70">ආයුබෝවන් · Vanakkam · Welcome</p>
       ) : null}

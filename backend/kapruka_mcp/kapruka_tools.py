@@ -27,8 +27,8 @@ PERISHABLE_PREFIXES = ("CAKE", "FLOWER", "COMBO")
 MCP_REQUESTS_PER_MINUTE = 60
 MCP_ORDER_LIMIT_PER_HOUR = 30
 MCP_READ_CACHE_TTL_SECONDS = 30 * 60  # matches server-side product/category cache
-MCP_RATE_LIMIT_RETRIES = 1  # one retry after server says rate limited / transient 5xx
-MCP_RATE_LIMIT_BACKOFF_SECONDS = 5.0
+MCP_RATE_LIMIT_RETRIES = 3  # up to 3 retries with exponential backoff
+MCP_RATE_LIMIT_BASE_BACKOFF_SECONDS = 1.0
 _TRANSIENT_HTTP_MARKERS = ("429", "502", "503", "520", "Too Many Requests")
 MCP_MAX_WAIT_SECONDS = 15.0  # fail fast for voice UX if limiter would block longer
 MCP_CONNECT_TIMEOUT = 12.0
@@ -315,12 +315,15 @@ class _KaprukaMCPClient:
                         "Please try again in a few seconds."
                     )
                     if attempt < MCP_RATE_LIMIT_RETRIES:
+                        backoff = MCP_RATE_LIMIT_BASE_BACKOFF_SECONDS * (2 ** attempt)
                         logger.warning(
-                            "Kapruka MCP timeout on %s; retrying in %.0fs",
+                            "Kapruka MCP timeout on %s; retrying in %.1fs (attempt %d/%d)",
                             tool_name,
-                            MCP_RATE_LIMIT_BACKOFF_SECONDS,
+                            backoff,
+                            attempt + 1,
+                            MCP_RATE_LIMIT_RETRIES,
                         )
-                        await asyncio.sleep(MCP_RATE_LIMIT_BACKOFF_SECONDS)
+                        await asyncio.sleep(backoff)
                         continue
                     raise last_error
                 except asyncio.CancelledError:
@@ -337,13 +340,16 @@ class _KaprukaMCPClient:
                                 "Error: Kapruka is temporarily unavailable. Please try again in a few seconds."
                             )
                         if attempt < MCP_RATE_LIMIT_RETRIES:
+                            backoff = MCP_RATE_LIMIT_BASE_BACKOFF_SECONDS * (2 ** attempt)
                             logger.warning(
-                                "Kapruka MCP transient error on %s (%s); retrying in %.0fs",
+                                "Kapruka MCP transient error on %s (%s); retrying in %.1fs (attempt %d/%d)",
                                 tool_name,
                                 message.split("\n", 1)[0][:120],
-                                MCP_RATE_LIMIT_BACKOFF_SECONDS,
+                                backoff,
+                                attempt + 1,
+                                MCP_RATE_LIMIT_RETRIES,
                             )
-                            await asyncio.sleep(MCP_RATE_LIMIT_BACKOFF_SECONDS)
+                            await asyncio.sleep(backoff)
                             await self._reset_session()
                             continue
                         raise last_error
@@ -357,12 +363,15 @@ class _KaprukaMCPClient:
                 if raw.startswith("Error:"):
                     last_error = KaprukaMCPError(raw)
                     if "rate limit" in raw.lower() and attempt < MCP_RATE_LIMIT_RETRIES:
+                        backoff = MCP_RATE_LIMIT_BASE_BACKOFF_SECONDS * (2 ** attempt)
                         logger.warning(
-                            "Kapruka MCP server rate limited %s; retrying in %.0fs",
+                            "Kapruka MCP server rate limited %s; retrying in %.1fs (attempt %d/%d)",
                             tool_name,
-                            MCP_RATE_LIMIT_BACKOFF_SECONDS,
+                            backoff,
+                            attempt + 1,
+                            MCP_RATE_LIMIT_RETRIES,
                         )
-                        await asyncio.sleep(MCP_RATE_LIMIT_BACKOFF_SECONDS)
+                        await asyncio.sleep(backoff)
                         continue
                     raise last_error
 

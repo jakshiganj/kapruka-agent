@@ -41,7 +41,7 @@ export function CheckoutCard({
         <h2 className="mt-0.5 text-lg font-bold text-[#222222]">Your Kapruka checkout</h2>
       </div>
 
-      <div className="space-y-3 p-5">
+      <div className="space-y-3 p-4 sm:p-5">
         {isStale ? (
           <div className="rounded-xl border border-[#6f5d00]/30 bg-[#fff8e0] px-4 py-3 text-sm text-[#6f5d00]">
             <p className="font-semibold">Cart changed — this link may be outdated</p>
@@ -137,7 +137,7 @@ export function CheckoutCard({
             className={`inline-flex w-full items-center justify-center rounded-xl px-4 py-3 text-center text-sm font-semibold shadow-sm ${
               isStale
                 ? "pointer-events-none bg-[#eae7e7] text-[#494550]/60"
-                : "bg-[#FBD614] text-[#222222] hover:bg-[#fdd818]"
+                : "bg-gradient-to-r from-[#FBD614] to-[#fdd818] text-[#222222] shadow-sm transition-all hover:shadow-md"
             }`}
             aria-disabled={isStale}
           >

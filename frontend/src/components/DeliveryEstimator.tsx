@@ -41,7 +41,7 @@ export function DeliveryEstimator() {
   const available = result?.available;
 
   return (
-    <div className="w-full max-w-lg rounded-2xl border border-[#402970]/12 bg-white p-4 text-left shadow-[0_2px_12px_rgba(64,41,112,0.06)]">
+    <div className="w-full max-w-lg rounded-2xl border border-[#402970]/10 bg-white p-3.5 text-left shadow-[0_2px_12px_rgba(64,41,112,0.05)] sm:p-4">
       <p className="text-sm font-semibold text-[#222222]">Check delivery before you shop</p>
       <p className="mt-0.5 text-xs text-[#494550]">
         See if Kapruka delivers to your city on a given date.
@@ -55,7 +55,7 @@ export function DeliveryEstimator() {
             if (e.key === "Enter") void check();
           }}
           placeholder="City (e.g. Colombo 07)"
-          className="min-w-0 flex-1 rounded-lg border border-[#402970]/12 bg-[#F0EEFA]/40 px-3 py-2 text-sm text-[#222222] placeholder:text-[#494550]/50 focus:border-[#402970]/30 focus:bg-white focus:outline-none"
+          className="min-w-0 flex-1 rounded-lg border border-[#402970]/10 bg-[#F0EEFA]/40 px-3 py-2 text-sm text-[#222222] placeholder:text-[#494550]/40 transition-all focus:border-[#402970]/25 focus:bg-white focus:outline-none"
         />
         <input
           type="date"
@@ -68,7 +68,7 @@ export function DeliveryEstimator() {
           type="button"
           onClick={() => void check()}
           disabled={loading || !city.trim()}
-          className="rounded-lg bg-[#402970] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#2a1059] disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-lg bg-gradient-to-r from-[#402970] to-[#5a3d8a] px-4 py-2 text-sm font-semibold text-white transition-all hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50"
         >
           {loading ? "Checking…" : "Check"}
         </button>

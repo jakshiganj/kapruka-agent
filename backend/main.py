@@ -1,4 +1,6 @@
+import logging
 import os
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -11,6 +13,7 @@ from pydantic import BaseModel
 
 from config import settings
 from graph.categories_api import get_categories
+from pythonjsonlogger import jsonlogger
 from kapruka_mcp.kapruka_tools import (
     KaprukaMCPError,
     get_mcp_stats,
@@ -26,6 +29,28 @@ from live.connection_pool import create_session, get_or_create_session, update_a
 from ws_stream.stream_handler import handle_stream
 
 _graph = None
+
+
+def setup_logging() -> None:
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    # Remove existing handlers
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+        
+    handler = logging.StreamHandler(sys.stdout)
+    formatter = jsonlogger.JsonFormatter(
+        "%(asctime)s %(levelname)s %(name)s %(message)s",
+        rename_fields={"levelname": "level", "asctime": "timestamp"}
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    
+    # Suppress verbose loggers
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
+setup_logging()
 
 
 @asynccontextmanager

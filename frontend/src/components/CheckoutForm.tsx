@@ -123,7 +123,7 @@ export function CheckoutForm({ payload, onSubmit, submitting = false }: Checkout
         <Field label="Recipient name" value={name} onChange={mark("name", setName)} required placeholder="Who's it for?" />
         <Field label="Recipient phone" value={phone} onChange={mark("phone", setPhone)} required placeholder="07X XXX XXXX" />
         <Field label="Delivery address" value={address} onChange={mark("address", setAddress)} required placeholder="Street, area (min. 3 characters)" />
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="City" value={city} onChange={mark("city", setCity)} required />
           <Field label="Delivery date" value={date} onChange={mark("date", setDate)} type="date" required />
         </div>
@@ -146,7 +146,7 @@ export function CheckoutForm({ payload, onSubmit, submitting = false }: Checkout
           type="button"
           onClick={handleSubmit}
           disabled={!ready || pending}
-          className="w-full rounded-xl bg-[#402970] px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#2a1059] disabled:cursor-not-allowed disabled:opacity-50"
+          className="w-full rounded-xl bg-gradient-to-r from-[#402970] to-[#5a3d8a] px-4 py-3.5 text-sm font-semibold text-white shadow-[0_4px_16px_rgba(64,41,112,0.2)] transition-all hover:shadow-[0_6px_20px_rgba(64,41,112,0.3)] disabled:cursor-not-allowed disabled:opacity-50"
         >
           {pending && submitting ? "Placing order…" : pending ? "Try again" : "Place order"}
         </button>

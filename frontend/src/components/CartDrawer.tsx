@@ -1,3 +1,4 @@
+import { motion, AnimatePresence } from "framer-motion";
 import type { Translator } from "../i18n";
 import type { CartItem, CheckoutCartSnapshot, DeliveryInfo } from "../types";
 
@@ -53,7 +54,7 @@ function QtyButton({
       aria-label={label}
       onClick={onClick}
       disabled={!onClick}
-      className="flex h-7 w-7 items-center justify-center rounded-full border border-[#402970]/15 bg-white text-[#402970] transition-colors hover:bg-[#F0EEFA] disabled:cursor-not-allowed disabled:opacity-40"
+      className="flex h-8 w-8 items-center justify-center rounded-full border border-[#402970]/15 bg-white text-[#402970] transition-all hover:bg-[#F0EEFA] hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-40 sm:h-7 sm:w-7"
     >
       {children}
     </button>
@@ -82,22 +83,28 @@ export function CartDrawer({
     checkoutStale || cartDiffersFromSnapshot(cart, checkoutSnapshot);
 
   return (
-    <>
-      <div
-        className={`fixed inset-0 z-40 bg-[#1b1c1c]/40 backdrop-blur-sm transition-opacity ${
-          open ? "opacity-100" : "pointer-events-none opacity-0"
-        }`}
-        onClick={onClose}
-        aria-hidden={!open}
-      />
-      <aside
-        className={`fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col border-l border-[#402970]/10 bg-[#fcf9f8] shadow-2xl transition-transform duration-300 ${
-          open ? "translate-x-0" : "translate-x-full"
-        }`}
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-        aria-hidden={!open}
-      >
-        <header className="flex items-center justify-between border-b border-[#402970]/10 bg-white px-5 py-4">
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-40 bg-[#1b1c1c]/40 backdrop-blur-sm"
+            onClick={onClose}
+            aria-hidden={!open}
+          />
+          <motion.aside
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%" }}
+            transition={{ type: "spring", damping: 25, stiffness: 200 }}
+            className="fixed right-0 top-0 z-50 flex h-full w-full flex-col border-l border-[#402970]/8 bg-[#fcf9f8] shadow-2xl sm:max-w-md"
+            style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+            aria-hidden={!open}
+          >
+            <header className="flex items-center justify-between border-b border-[#402970]/8 bg-white px-4 py-3 sm:px-5 sm:py-4">
           <div>
             <h2 className="text-lg font-semibold text-[#222222]">{t("cart.title")}</h2>
             <p className="text-xs text-[#494550]">
@@ -113,7 +120,7 @@ export function CartDrawer({
           </button>
         </header>
 
-        <div className="scrollbar-thin flex-1 overflow-y-auto px-5 py-4">
+        <div className="scrollbar-thin flex-1 overflow-y-auto px-4 py-3 sm:px-5 sm:py-4">
           {cart.length === 0 ? (
             <div className="mt-10 text-center text-[#494550]">
               <p className="text-3xl">🎁</p>
@@ -126,7 +133,7 @@ export function CartDrawer({
                   key={item.product_id}
                   className="flex gap-3 rounded-2xl border border-[#402970]/10 bg-white p-3 shadow-[0_2px_8px_rgba(64,41,112,0.05)]"
                 >
-                  <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-[#F0EEFA]">
+                  <div className="h-18 w-18 shrink-0 overflow-hidden rounded-xl bg-[#F0EEFA] sm:h-16 sm:w-16">
                     {item.image_url ? (
                       <img
                         src={item.image_url}
@@ -191,7 +198,7 @@ export function CartDrawer({
           )}
         </div>
 
-        <footer className="space-y-2 border-t border-[#402970]/10 bg-white px-5 py-4">
+        <footer className="space-y-2 border-t border-[#402970]/8 bg-white px-4 py-3 sm:px-5 sm:py-4">
           {showStaleWarning ? (
             <div className="rounded-xl border border-[#6f5d00]/30 bg-[#fff8e0] px-3 py-2 text-xs text-[#6f5d00]">
               Cart changed since your last payment link. Say checkout for a fresh link.
@@ -224,13 +231,15 @@ export function CartDrawer({
             <button
               type="button"
               onClick={onProceedCheckout}
-              className="mt-2 w-full rounded-xl bg-[#402970] px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#2a1059]"
+              className="mt-2 w-full rounded-xl bg-gradient-to-r from-[#402970] to-[#5a3d8a] px-4 py-3.5 text-sm font-semibold text-white shadow-[0_4px_16px_rgba(64,41,112,0.2)] transition-all hover:shadow-[0_6px_20px_rgba(64,41,112,0.3)]"
             >
               Proceed to checkout
             </button>
           ) : null}
         </footer>
-      </aside>
-    </>
+          </motion.aside>
+        </>
+      )}
+    </AnimatePresence>
   );
 }
