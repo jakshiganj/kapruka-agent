@@ -14,7 +14,7 @@ function collectEvents(payload: OrderTrackingPayload): OrderTrackingEvent[] {
 
 function eventLabel(event: OrderTrackingEvent): string {
   return (
-    event.label ?? event.title ?? event.status ?? event.description ?? "Update"
+    event.step ?? event.label ?? event.title ?? event.status ?? event.description ?? "Update"
   );
 }
 
@@ -65,6 +65,59 @@ export function OrderTrackingCard({ payload }: OrderTrackingCardProps) {
             <span className="text-xs text-[#494550]">For {recipientName}</span>
           ) : null}
         </div>
+
+        {(tracking.amount?.value || tracking.payment_method || tracking.recipient?.phone || tracking.recipient?.address || tracking.comments || tracking.greeting_message || tracking.special_instructions) && (
+          <div className="rounded-lg bg-[#F9F8FD] p-3 text-sm text-[#494550] space-y-2">
+            {tracking.amount?.value && (
+              <div className="flex justify-between">
+                <span className="font-medium">Total Amount:</span>
+                <span>{tracking.amount.currency} {tracking.amount.value}</span>
+              </div>
+            )}
+            {tracking.payment_method && (
+              <div className="flex justify-between">
+                <span className="font-medium">Payment Method:</span>
+                <span>{tracking.payment_method}</span>
+              </div>
+            )}
+            {tracking.recipient?.phone && (
+              <div className="flex justify-between">
+                <span className="font-medium">Phone:</span>
+                <span dangerouslySetInnerHTML={{ __html: tracking.recipient.phone }} />
+              </div>
+            )}
+            {tracking.recipient?.address && (
+              <div className="flex justify-between gap-4">
+                <span className="font-medium whitespace-nowrap">Address:</span>
+                <span className="text-right truncate">{tracking.recipient.address}</span>
+              </div>
+            )}
+            {tracking.recipient?.city && (
+              <div className="flex justify-between">
+                <span className="font-medium">City:</span>
+                <span>{tracking.recipient.city}</span>
+              </div>
+            )}
+            {tracking.comments && (
+              <div className="flex flex-col gap-0.5">
+                <span className="font-medium">Comments:</span>
+                <span className="text-xs">{tracking.comments}</span>
+              </div>
+            )}
+            {tracking.greeting_message && (
+              <div className="flex flex-col gap-0.5">
+                <span className="font-medium">Greeting Message:</span>
+                <span className="text-xs italic">"{tracking.greeting_message}"</span>
+              </div>
+            )}
+            {tracking.special_instructions && (
+              <div className="flex flex-col gap-0.5">
+                <span className="font-medium">Special Instructions:</span>
+                <span className="text-xs">{tracking.special_instructions}</span>
+              </div>
+            )}
+          </div>
+        )}
 
         {items.length > 0 ? (
           <ul className="space-y-1 text-sm text-[#494550]">

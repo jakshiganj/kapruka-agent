@@ -65,7 +65,7 @@ GIFT_MESSAGE_PATTERN = re.compile(
 PHONE_PATTERN = re.compile(r"(?:\+94|0)?7\d{8}")
 TRACK_INTENT_PATTERN = re.compile(
     r"\b(track(?:ing)?(?: my)?(?: order| delivery| parcel)?|where(?:'s| is) my (?:order|delivery|parcel)|"
-    r"order status|delivery status|status of (?:my )?order)\b",
+    r"order status|delivery status|status of (?:my )?order|tract(?: my)?(?: order)?|trace(?: my)?(?: order)?)\b",
     re.IGNORECASE,
 )
 # Capture an order number after the word "order", or a standalone alphanumeric token.
@@ -96,7 +96,16 @@ def _wants_category_browse(user_text: str) -> bool:
 
 
 def _wants_track_order(user_text: str) -> bool:
-    return bool(TRACK_INTENT_PATTERN.search(user_text))
+    if TRACK_INTENT_PATTERN.search(user_text):
+        return True
+    order_number = _extract_order_number(user_text)
+    if order_number:
+        words = user_text.strip().split()
+        if len(words) <= 3:
+            return True
+        if re.search(r"\b(order|tract|trace|where)\b", user_text, re.IGNORECASE):
+            return True
+    return False
 
 
 def _extract_order_number(user_text: str) -> str | None:

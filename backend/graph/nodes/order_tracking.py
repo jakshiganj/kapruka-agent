@@ -42,6 +42,41 @@ def order_tracking_node(state: AgentState) -> dict[str, Any]:
         or "in progress"
     )
 
+    try:
+        from graph.llm import get_llm
+        from pydantic import BaseModel, Field
+
+        class TrackingSummary(BaseModel):
+            voice_prompt: str = Field(description="A short, conversational voice response explaining the order status to the user.")
+
+        llm = get_llm().with_structured_output(TrackingSummary)
+        language_directive = "Reply in the same language the customer prefers (English, Sinhala, Tamil, or Tanglish). "
+        
+        # Determine language directive from state if available
+        preferred_language = str(state.get("preferred_language") or "").lower()
+        if preferred_language == "si":
+            language_directive = "Write the voice response in clear, friendly Sinhala (Sinhala script). Keep names and URLs as-is."
+        elif preferred_language == "ta":
+            language_directive = "Write the voice response in clear, friendly Tamil (Tamil script). Keep names and URLs as-is."
+
+        summary = llm.invoke([
+            {
+                "role": "system", 
+                "content": f"You are a Kapruka shopping agent. Read the provided JSON order tracking data and write a short, friendly voice response (max 2 sentences) summarizing the status of the user's order. Mention the most recent progress step or the final status. Do not read out all the details, just give the key takeaway. {language_directive}"
+            },
+            {
+                "role": "user",
+                "content": f"Order Number: {order_number}\nTracking Data: {tracking}"
+            }
+        ])
+        voice_prompt = summary.voice_prompt
+    except Exception as e:
+        logger.error("Failed to generate tracking summary: %s", e)
+        voice_prompt = (
+            f"Here's the latest on order {order_number} — it's {status}. "
+            "You can see the full timeline on your screen."
+        )
+
     return {
         "ui_action": {
             "action": "show_order_tracking",
@@ -50,9 +85,6 @@ def order_tracking_node(state: AgentState) -> dict[str, Any]:
                 "tracking": tracking,
             },
         },
-        "voice_prompt": (
-            f"Here's the latest on order {order_number} — it's {status}. "
-            "You can see the full timeline on your screen."
-        ),
+        "voice_prompt": voice_prompt,
         "next_node": "end",
     }

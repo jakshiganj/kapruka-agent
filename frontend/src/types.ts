@@ -74,6 +74,7 @@ export interface OrderTrackingEvent {
   title?: string;
   description?: string;
   note?: string;
+  step?: string;
   timestamp?: string;
   time?: string;
   date?: string;
@@ -83,7 +84,12 @@ export interface OrderTrackingEvent {
 export interface OrderTracking {
   status?: string;
   order_status?: string;
-  recipient?: { name?: string };
+  recipient?: { name?: string; phone?: string; address?: string; city?: string };
+  amount?: { value?: string | number; currency?: string };
+  payment_method?: string;
+  comments?: string;
+  greeting_message?: string;
+  special_instructions?: string;
   items?: Array<{ name?: string; quantity?: number }>;
   events?: OrderTrackingEvent[];
   history?: OrderTrackingEvent[];
